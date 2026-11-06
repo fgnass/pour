@@ -265,7 +265,7 @@ function toolHint() {
     case 'torch':
       return 'Move the flame over the paint to make cells';
     case 'none':
-      return 'Torch off';
+      return 'Pick a tool';
     case 'tilt':
       if (tilt.mode === 'sensor') return 'Tilt your phone · tap the canvas to level again';
       if (tilt.mode === 'pending') return 'Tilt your phone …';
@@ -285,8 +285,11 @@ document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
   b.addEventListener('click', () => {
     // with a cup on the canvas, the cup button lifts it
     if (b === cupBtn && cupOnCanvas) lift();
-    // a second tap turns the torch off: then no tool is on
-    else if (b.dataset.tool === 'torch' && tool === 'torch') setTool('none');
+    // a second tap turns the torch or tilt off: then no tool is on
+    else if ((b.dataset.tool === 'torch' || b.dataset.tool === 'tilt') && tool === b.dataset.tool) {
+      setTool('none', false);
+      hint(b.dataset.tool === 'tilt' ? 'Tilt off – the canvas lies flat' : 'Torch off');
+    }
     else setTool(b.dataset.tool as Tool);
   }),
 );
