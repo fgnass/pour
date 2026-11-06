@@ -629,7 +629,6 @@ function frame(now: number) {
     torchOn: !!studio.torch,
     pouring: !!pour,
     intoCup: !!pour && studio.hitsCup(pour.x, pour.y, 1.15),
-    flow: simulate ? Math.hypot(t.x, t.y) / P.tiltMax : 0,
   });
   const lifting = !!studio.cup?.lifting;
   if (lifting && !wasLifting) sound.lift();

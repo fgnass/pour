@@ -1,8 +1,7 @@
 // Synthesised sound effects (Web Audio, no samples).
 // - torch: a gas burner. Quiet while the Torch tool is on, a full roar while
 //   the flame points at the canvas.
-// - pour: a thick stream with viscous glugs.
-// - flow: soft slosh and the odd glug while the paint runs (tilt).
+// - pour: slow, viscous glugs (no stream noise: the paint is thick).
 // - lift: a slurp when the cup comes off.
 
 export type SoundState = {
@@ -10,8 +9,6 @@ export type SoundState = {
   torchOn: boolean;
   pouring: boolean;
   intoCup: boolean;
-  /** 0..1 how much the paint flows */
-  flow: number;
 };
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -29,12 +26,8 @@ export class Sound {
   private hissGain!: GainNode;
   private flutter = 1;
   private torchWasOn = false;
-  // pour + flow
-  private streamGain!: GainNode;
-  private streamBP!: BiquadFilterNode;
-  private sloshGain!: GainNode;
+  // pour
   private nextGlug = 0;
-  private nextFlowGlug = 0;
 
   /** Call from a user gesture: browsers only start audio after one. */
   unlock() {
@@ -107,25 +100,10 @@ export class Sound {
     this.hissGain.gain.value = 0.12;
     this.loop(1.1).connect(hissBP).connect(this.hissGain).connect(this.torchGain);
 
-    // --- pour stream + flow slosh
-    this.streamBP = ctx.createBiquadFilter();
-    this.streamBP.type = 'bandpass';
-    this.streamBP.frequency.value = 500;
-    this.streamBP.Q.value = 0.9;
-    this.streamGain = ctx.createGain();
-    this.streamGain.gain.value = 0;
-    this.loop(2.0).connect(this.streamBP).connect(this.streamGain).connect(this.master);
-    const sloshLP = ctx.createBiquadFilter();
-    sloshLP.type = 'lowpass';
-    sloshLP.frequency.value = 260;
-    this.sloshGain = ctx.createGain();
-    this.sloshGain.gain.value = 0;
-    this.loop(0.6).connect(sloshLP).connect(this.sloshGain).connect(this.master);
-
     // glugs go through a soft low-pass: thick paint, not water
     const glugLP = ctx.createBiquadFilter();
     glugLP.type = 'lowpass';
-    glugLP.frequency.value = 1400;
+    glugLP.frequency.value = 900;
     this.glugBus = ctx.createGain();
     this.glugBus.gain.value = 0.9;
     this.glugBus.connect(glugLP).connect(this.master);
@@ -142,17 +120,27 @@ export class Sound {
   /** One bubble: a sine whose pitch rises while it decays. */
   private glug(t: number, f: number, dur: number, gain: number) {
     const ctx = this.ctx!;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(f, t);
-    o.frequency.exponentialRampToValueAtTime(f * rnd(1.4, 2.0), t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(gain, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.018);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(this.glugBus);
-    o.start(t);
-    o.stop(t + dur + 0.02);
+    g.connect(this.glugBus);
+    // thick paint: the bubble rises slowly in pitch, with a quiet second partial
+    const rise = rnd(1.25, 1.6);
+    for (const [k, a] of [
+      [1, 1],
+      [2.4, 0.18],
+    ]) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(f * k, t);
+      o.frequency.exponentialRampToValueAtTime(f * k * rise, t + dur);
+      const og = ctx.createGain();
+      og.gain.value = a;
+      o.connect(og).connect(g);
+      o.start(t);
+      o.stop(t + dur + 0.02);
+    }
   }
 
   /** Ignition: a short gas puff when the torch comes on. */
@@ -167,8 +155,8 @@ export class Sound {
     bp.frequency.exponentialRampToValueAtTime(1800, t + 0.12);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(1.1, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    g.gain.exponentialRampToValueAtTime(0.12, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.45);
     s.connect(bp).connect(g).connect(this.master);
     s.start(t, rnd(0, 2));
     s.stop(t + 0.4);
@@ -178,9 +166,7 @@ export class Sound {
   lift() {
     if (!this.ready()) return;
     const t = this.ctx!.currentTime;
-    for (let i = 0; i < 5; i++) this.glug(t + i * rnd(0.05, 0.09), rnd(110, 180) - i * 12, rnd(0.12, 0.2), 0.5);
-    this.streamGain.gain.setTargetAtTime(0.35, t, 0.03);
-    this.streamGain.gain.setTargetAtTime(0, t + 0.3, 0.15);
+    for (let i = 0; i < 4; i++) this.glug(t + i * rnd(0.08, 0.14), rnd(90, 140) - i * 8, rnd(0.18, 0.28), 0.4);
   }
 
   private ready() {
@@ -194,31 +180,22 @@ export class Sound {
     const t = ctx.currentTime;
 
     // torch
-    const torchLevel = s.torchOn ? 0.75 : s.torchTool ? 0.22 : 0;
+    const torchLevel = s.torchOn ? 0.22 : s.torchTool ? 0.05 : 0;
     if (s.torchTool && !this.torchWasOn) this.ignite(t);
     this.torchWasOn = s.torchTool;
     // a burner flutters: small random changes of loudness and colour
     this.flutter += (rnd(0.75, 1.25) - this.flutter) * 0.5;
-    this.torchGain.gain.setTargetAtTime(torchLevel * this.flutter, t, s.torchTool ? 0.04 : 0.12);
+    // fades in slowly, so turning it on does not startle
+    this.torchGain.gain.setTargetAtTime(torchLevel * this.flutter, t, s.torchOn ? 0.08 : 0.25);
     this.roarLP.frequency.setTargetAtTime((s.torchOn ? 900 : 380) * rnd(0.85, 1.15), t, 0.05);
     this.roarGain.gain.setTargetAtTime(s.torchOn ? 1.4 : 1, t, 0.08);
     this.hissGain.gain.setTargetAtTime(s.torchOn ? 0.22 : 0.1, t, 0.08);
 
-    // pour: stream noise and glugs
-    this.streamGain.gain.setTargetAtTime(s.pouring ? 0.16 : 0, t, s.pouring ? 0.05 : 0.12);
-    this.streamBP.frequency.setTargetAtTime(s.intoCup ? 700 : 480, t, 0.1);
+    // pour: slow, viscous glugs
     if (s.pouring && t >= this.nextGlug) {
-      const base = s.intoCup ? 230 : 160;
-      this.glug(t + 0.01, rnd(base, base * 1.8), rnd(0.06, 0.14), rnd(0.25, 0.5));
-      this.nextGlug = t + rnd(0.05, 0.22);
-    }
-
-    // flow: slosh + rare deep glugs
-    const f = Math.max(0, Math.min(1, s.flow));
-    this.sloshGain.gain.setTargetAtTime(f * 0.3 * rnd(0.7, 1.3), t, 0.15);
-    if (f > 0.15 && t >= this.nextFlowGlug) {
-      this.glug(t + 0.01, rnd(80, 150), rnd(0.12, 0.22), 0.25 * f);
-      this.nextFlowGlug = t + rnd(0.25, 0.9) / f;
+      const base = s.intoCup ? 150 : 105;
+      this.glug(t + 0.01, rnd(base, base * 1.6), rnd(0.14, 0.26), rnd(0.3, 0.5));
+      this.nextGlug = t + rnd(0.16, 0.42);
     }
   }
 }
