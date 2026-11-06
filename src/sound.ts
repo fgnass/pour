@@ -1,9 +1,16 @@
-// Synthesised sound effects (Web Audio, no samples).
-// - torch: a gas burner. Quiet while the Torch tool is on, a full roar while
-//   the flame points at the canvas.
-// - pour: a cloud of viscous bubbles (bubble model after van den Doel).
-// - swipe: a wet squelch that follows the finger speed.
-// - lift: a slurp when the cup comes off.
+// Sound effects (Web Audio).
+// - torch: synthesised gas burner. Quiet while the Torch tool is on, louder
+//   while the flame points at the canvas.
+// - pour: a recording of pouring oil, played slower so it sounds thick.
+// - swipe: single squelches cut from a recording of slippery jelly; the
+//   faster the finger, the more of them.
+// - lift: a short burst of the pour recording.
+// Recordings (CC0, freesound.org): "Pouring oil.wav" by clement.bernardeau,
+// "Guck, Slime, slippery Jelly" by breiti.
+import swipeEvents from './swipe-events.json';
+
+const POUR_RATE = 0.65;
+const SWIPE_RATE = 0.7;
 
 export type SoundState = {
   torchTool: boolean;
@@ -20,7 +27,6 @@ export class Sound {
   enabled = true;
   private ctx: AudioContext | null = null;
   private master!: GainNode;
-  private glugBus!: GainNode;
   private noise!: AudioBuffer;
   // torch
   private torchGain!: GainNode;
@@ -29,8 +35,10 @@ export class Sound {
   private hissGain!: GainNode;
   private flutter = 1;
   private torchWasOn = false;
-  // pour
-  private nextGlug = 0;
+  // samples
+  private pourBuf: AudioBuffer | null = null;
+  private swipeBuf: AudioBuffer | null = null;
+  private pourSrc: { s: AudioBufferSourceNode; g: GainNode } | null = null;
   private nextSquelch = 0;
 
   /** Call from a user gesture: browsers only start audio after one. */
@@ -104,13 +112,7 @@ export class Sound {
     this.hissGain.gain.value = 0.12;
     this.loop(1.1).connect(hissBP).connect(this.hissGain).connect(this.torchGain);
 
-    // bubbles go through a soft low-pass: thick paint, not water
-    const glugLP = ctx.createBiquadFilter();
-    glugLP.type = 'lowpass';
-    glugLP.frequency.value = 2200;
-    this.glugBus = ctx.createGain();
-    this.glugBus.gain.value = 0.9;
-    this.glugBus.connect(glugLP).connect(this.master);
+    this.loadSamples();
   }
 
   private loop(offset: number) {
@@ -121,48 +123,58 @@ export class Sound {
     return s;
   }
 
-  /**
-   * One bubble (van den Doel): a sine at the bubble's resonance f, damped with
-   * the rate d of a real bubble, and its pitch rises while it decays. Thick
-   * paint damps more (visc > 1).
-   */
-  private bubble(t: number, f: number, gain: number, visc = 1.6, rise = 0.35) {
+  private async loadSamples() {
     const ctx = this.ctx!;
-    const d = (0.13 * f + 0.0072 * f ** 1.5) * visc;
-    const dur = 5 / d;
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(f, t);
-    o.frequency.linearRampToValueAtTime(f * (1 + rise * d * dur * 0.2), t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(gain, t + 0.003);
-    g.gain.setTargetAtTime(0, t + 0.003, 1 / d);
-    o.connect(g).connect(this.glugBus);
-    o.start(t);
-    o.stop(t + dur + 0.01);
+    const get = async (name: string) => ctx.decodeAudioData(await (await fetch(`${import.meta.env.BASE_URL}sounds/${name}.mp3`)).arrayBuffer());
+    try {
+      [this.pourBuf, this.swipeBuf] = await Promise.all([get('pour'), get('swipe')]);
+    } catch {
+      /* offline before the first load: no sample sounds */
+    }
   }
 
-  /** A short wet squelch: band-passed noise whose pitch drops, sometimes with a tiny bubble. */
-  private squelch(t: number, gain: number) {
+  /** Start the pour loop at a random place, so it never sounds the same. */
+  private startPour(t: number) {
     const ctx = this.ctx!;
     const s = ctx.createBufferSource();
-    s.buffer = this.noise;
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.Q.value = rnd(2.5, 5);
-    const f = rnd(500, 1300);
-    const dur = rnd(0.04, 0.09);
-    bp.frequency.setValueAtTime(f, t);
-    bp.frequency.exponentialRampToValueAtTime(f * rnd(0.45, 0.7), t + dur);
+    s.buffer = this.pourBuf!;
+    s.loop = true;
+    s.playbackRate.value = POUR_RATE;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(gain, t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(bp).connect(g).connect(this.master);
-    s.start(t, rnd(0, 2.5));
-    s.stop(t + dur + 0.01);
-    if (Math.random() < 0.35) this.bubble(t + rnd(0, dur), rnd(900, 1800), gain * 0.5, 2.5, 0.5);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.4, t + 0.08);
+    s.connect(g).connect(this.master);
+    s.start(t, Math.random() * this.pourBuf!.duration);
+    this.pourSrc = { s, g };
+  }
+
+  private stopPour(t: number) {
+    const p = this.pourSrc;
+    if (!p) return;
+    p.g.gain.cancelScheduledValues(t);
+    p.g.gain.setTargetAtTime(0, t, 0.08);
+    p.s.stop(t + 0.5);
+    this.pourSrc = null;
+  }
+
+  /** One squelch from the jelly recording. Returns its length in seconds. */
+  private squelch(t: number, gain: number) {
+    const ctx = this.ctx!;
+    const [start, len] = swipeEvents[(Math.random() * swipeEvents.length) | 0];
+    const rate = SWIPE_RATE * rnd(0.9, 1.1);
+    const L = Math.max(0.06, len) / rate;
+    const s = ctx.createBufferSource();
+    s.buffer = this.swipeBuf!;
+    s.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.008);
+    g.gain.setValueAtTime(gain, t + L * 0.7);
+    g.gain.linearRampToValueAtTime(0, t + L);
+    s.connect(g).connect(this.master);
+    s.start(t, start);
+    s.stop(t + L + 0.01);
+    return L;
   }
 
   /** Ignition: a short gas puff when the torch comes on. */
@@ -184,12 +196,21 @@ export class Sound {
     s.stop(t + 0.4);
   }
 
-  /** Slurp when the cup is lifted off the canvas. */
+  /** The paint lets go of the cup: a short, slow burst of the pour sound. */
   lift() {
-    if (!this.ready()) return;
-    const t = this.ctx!.currentTime;
-    // the paint lets go of the cup: a few large bubbles, then smaller ones
-    for (let i = 0; i < 9; i++) this.bubble(t + i * rnd(0.03, 0.08), rnd(220, 420) * (1 + i * 0.12), rnd(0.12, 0.25));
+    if (!this.ready() || !this.pourBuf) return;
+    const ctx = this.ctx!;
+    const t = ctx.currentTime;
+    const s = ctx.createBufferSource();
+    s.buffer = this.pourBuf;
+    s.playbackRate.value = POUR_RATE * 0.85;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.45, t + 0.05);
+    g.gain.setTargetAtTime(0, t + 0.5, 0.15);
+    s.connect(g).connect(this.master);
+    s.start(t, Math.random() * (this.pourBuf.duration - 2));
+    s.stop(t + 1.3);
   }
 
   private ready() {
@@ -214,19 +235,19 @@ export class Sound {
     this.roarGain.gain.setTargetAtTime(s.torchOn ? 1.15 : 1, t, 0.08);
     this.hissGain.gain.setTargetAtTime(s.torchOn ? 0.22 : 0.1, t, 0.08);
 
-    // pour: bubbles in small clusters, like thick paint folding over itself
-    if (s.pouring && t >= this.nextGlug) {
-      const base = s.intoCup ? 380 : 300;
-      const n = 1 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < n; i++) this.bubble(t + 0.01 + i * rnd(0.012, 0.04), rnd(base, base * 2.2), rnd(0.08, 0.22));
-      this.nextGlug = t + rnd(0.05, 0.16);
+    // pour: the recording loops while paint is poured
+    if (this.pourBuf) {
+      if (s.pouring && !this.pourSrc) this.startPour(t);
+      else if (!s.pouring && this.pourSrc) this.stopPour(t);
+      // into the cup the stream falls a shorter way: a bit higher
+      this.pourSrc?.s.playbackRate.setTargetAtTime(POUR_RATE * (s.intoCup ? 1.12 : 1), t, 0.1);
     }
 
     // swipe: squelches, more and louder the faster the finger moves
     const k = Math.min(1, s.swipe / 0.8);
-    if (k > 0.05 && t >= this.nextSquelch) {
-      this.squelch(t + 0.005, 0.05 + 0.12 * k);
-      this.nextSquelch = t + rnd(0.03, 0.09) / k;
+    if (this.swipeBuf && k > 0.05 && t >= this.nextSquelch) {
+      const L = this.squelch(t + 0.005, 0.6 * (0.4 + 0.6 * k));
+      this.nextSquelch = t + Math.max(0.03, L * 0.5) / k;
     }
   }
 }

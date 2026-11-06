@@ -19,7 +19,7 @@ export default defineConfig({
         orientation: 'portrait',
         start_url: '/',
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest}'] },
+      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,ico,webmanifest,mp3}'] },
     }),
   ],
 });
