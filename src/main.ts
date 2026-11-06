@@ -588,12 +588,15 @@ async function saveImage() {
 // A stage counts as safe after it ran for a few seconds without a crash.
 const guardStart: Record<string, number> = {};
 function guard(stage: string, now: number) {
-  const t = guardStart[stage];
-  if (t === undefined) {
-    guardStart[stage] = now;
-    boot(stage);
-  } else if (t >= 0 && now - t > 4000) {
-    guardStart[stage] = -1;
+  if (guardStart[stage] !== undefined) return;
+  guardStart[stage] = now;
+  boot(stage);
+}
+/** called every frame: clears the mark once every started stage is old enough */
+function guardTick(now: number) {
+  const open = Object.values(guardStart).filter(t => t >= 0);
+  if (open.length && open.every(t => now - t > 4000)) {
+    for (const k in guardStart) guardStart[k] = -1;
     boot(null);
   }
 }
@@ -610,6 +613,7 @@ const FRAME_MS = 1000 / (+(qs.get('fps') ?? 0) || 30);
 function frame(now: number) {
   requestAnimationFrame(frame);
   if (now - last < FRAME_MS - 2) return;
+  guardTick(now);
   const rdt = Math.min((now - last) / 1000, 1 / 20);
   last = now;
   // never exceed the stable step: slow the simulation down instead
