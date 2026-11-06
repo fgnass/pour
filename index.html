@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#131416" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Pour" />
+    <meta name="description" content="Acrylic open cup pour simulator. Tilt your phone to make the paint flow." />
+    <title>Pour</title>
+  </head>
+  <body>
+    <div id="stage"><canvas id="gl"></canvas></div>
+
+    <div id="hud">
+      <header class="top">
+        <button id="menuBtn" class="round" aria-label="Menu">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
+        <p id="hint" class="hint" aria-live="polite"></p>
+        <button id="levelBtn" class="round" aria-label="Level the canvas" hidden>
+          <svg viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="8" rx="4" /><circle cx="12" cy="12" r="2" /><path d="M8.5 8v8M15.5 8v8" /></svg>
+        </button>
+      </header>
+
+      <footer class="dock">
+        <div id="paints" class="paints" role="radiogroup" aria-label="Paint"></div>
+        <div class="tools">
+          <div class="seg" id="tools" role="radiogroup" aria-label="Tool">
+            <button data-tool="pour" role="radio">
+              <svg viewBox="0 0 24 24"><path d="M12 3.5c-3.2 4.2-5.8 7.6-5.8 10.8a5.8 5.8 0 0 0 11.6 0c0-3.2-2.6-6.6-5.8-10.8z" /></svg>
+              <span>Pour</span>
+            </button>
+            <button data-tool="cup" role="radio">
+              <svg viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="6.5" ry="2" /><path d="M5.5 6l1.6 12.5c.2 1.4 2.4 2 4.9 2s4.7-.6 4.9-2L18.5 6" /></svg>
+              <span>Cup</span>
+            </button>
+            <button data-tool="swipe" role="radio">
+              <svg viewBox="0 0 24 24"><path d="M3 14c2.5-4 5-4 7.5 0s5 4 7.5 0" /><path d="M18 9.5l3 4.5-5 1" /></svg>
+              <span>Swipe</span>
+            </button>
+            <button data-tool="tilt" role="radio" hidden>
+              <svg viewBox="0 0 24 24"><path d="M4 16l8-9 8 9" /><path d="M2 20h20" /></svg>
+              <span>Tilt</span>
+            </button>
+          </div>
+          <button id="liftBtn" class="act" disabled>
+            <svg viewBox="0 0 24 24"><path d="M12 15V3.5M7.5 8L12 3.5 16.5 8" /><path d="M5 14.5c0 3.5 3 6 7 6s7-2.5 7-6" /></svg>
+            <span>Lift</span>
+          </button>
+          <button id="torchBtn" class="act">
+            <svg viewBox="0 0 24 24"><path d="M12 3c.8 3.5 5.5 5.2 5.5 10.2a5.5 5.5 0 0 1-11 0c0-2.6 1.6-4 2-6 1 1.3 1.6 2 2.6 2.3C11 7.6 11 5.4 12 3z" /></svg>
+            <span>Torch</span>
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="sheet" class="sheet" hidden>
+      <div class="sheet-panel" role="dialog" aria-label="Menu">
+        <button data-act="new">New canvas</button>
+        <button data-act="demo">Play demo</button>
+        <button data-act="save">Save image</button>
+        <button data-act="level" class="sensor-only">Level the canvas</button>
+        <button data-act="help">How it works</button>
+      </div>
+    </div>
+
+    <div id="start" class="start">
+      <div class="start-panel">
+        <h1>Pour</h1>
+        <p class="lead">An acrylic open cup pour, on your phone.</p>
+        <ol>
+          <li>Pour a puddle of <b>white</b>.</li>
+          <li>Set the <b>cup</b> into it.</li>
+          <li>Pour <b>colours</b> into the cup. They sink under the white.</li>
+          <li>Drag the cup off in a spiral, then <b>lift</b> it.</li>
+          <li><b>Tilt</b> your phone until the paint covers the canvas.</li>
+        </ol>
+        <p class="note">Hold your phone as you like and tap Start. That pose is “level”.</p>
+        <div class="start-actions">
+          <button id="startBtn" class="primary">Start</button>
+          <button id="demoBtn">Watch demo</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="error" class="start" hidden><div class="start-panel"><h1>Sorry</h1><p id="errorMsg"></p></div></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
