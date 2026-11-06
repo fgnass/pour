@@ -13,6 +13,12 @@ export const M = {
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
   torchCells: 2500,
+  // The cup wall holds the paint back: at rest only a little seeps out under
+  // the rim. Moving the cup lets paint escape; lifting releases the rest.
+  leakRest: 0.08, // fraction of the contents per second
+  leakMove: 6, // extra fraction per second per unit of cup speed
+  leakPour: 0.1, // extra while paint lands in the cup
+  leakLift: 3.5,
 };
 
 const clampVel = (vx: number, vy: number): [number, number] => {
@@ -217,8 +223,8 @@ export class Studio {
       const speed = Math.hypot(cup.vx, cup.vy);
       const V = this.cupVolume();
       const intoCup = this.stream && pour && this.hitsCup(pour.x, pour.y, 1.15);
-      let leak = 0.8 + 7 * speed + (intoCup ? 0.4 : 0);
-      if (cup.lifting) leak = 3.5;
+      let leak = M.leakRest + M.leakMove * speed + (intoCup ? M.leakPour : 0);
+      if (cup.lifting) leak = M.leakLift;
       let q = V * (1 - Math.exp(-leak * dt));
       if (cup.lifting) q = Math.min(V, Math.max(q, 0.04 * dt));
       if (q > 1e-7) {
