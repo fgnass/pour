@@ -179,8 +179,8 @@ export class Sim {
   }
 
   /** Add one cell (a spot where submerged paint rises). */
-  addCell(x: number, y: number, life: number) {
-    this.spawns.push(x, y, this.cellRadius(), this.time + life);
+  addCell(x: number, y: number, life: number, size = 1) {
+    this.spawns.push(x, y, this.cellRadius() * size, this.time + life);
   }
 
   private flushSpawns() {

@@ -5,6 +5,7 @@ import { Studio } from './model';
 import { GL } from './sim/gl';
 import { MATS, PALETTES, setPalette, type Material } from './sim/materials';
 import { P, Sim, type Quality } from './sim/sim';
+import { Sound } from './sound';
 import { TiltInput } from './tilt';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -51,6 +52,20 @@ function wake() {
   needsDraw = true;
   lastBusy = performance.now();
 }
+
+// sound: on by default, the choice is kept
+const SOUND_KEY = 'pour.sound';
+const sound = new Sound();
+try {
+  sound.enabled = localStorage.getItem(SOUND_KEY) !== 'off';
+} catch {
+  /* no storage */
+}
+// browsers start audio only after a user gesture
+for (const ev of ['pointerdown', 'keydown'] as const) addEventListener(ev, () => sound.unlock(), { capture: true });
+const soundBtn = $<HTMLButtonElement>('[data-act="sound"]');
+const syncSoundBtn = () => (soundBtn.textContent = sound.enabled ? 'Sound: on' : 'Sound: off');
+syncSoundBtn();
 
 const viewAspect = () => innerWidth / innerHeight;
 let sim = new Sim(g, viewAspect(), quality);
@@ -408,6 +423,15 @@ sheet.addEventListener('click', e => {
     resize();
     demo.start();
   } else if (act === 'save') saveRequested = true;
+  else if (act === 'sound') {
+    sound.setEnabled(!sound.enabled);
+    syncSoundBtn();
+    try {
+      localStorage.setItem(SOUND_KEY, sound.enabled ? 'on' : 'off');
+    } catch {
+      /* no storage */
+    }
+  }
   else if (act === 'help') {
     startEl.hidden = false;
     startEl.classList.remove('gone');
@@ -473,7 +497,9 @@ async function keepAwake() {
   }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && wakeLock) keepAwake();
+  const visible = document.visibilityState === 'visible';
+  if (visible && wakeLock) keepAwake();
+  sound.setVisible(visible);
 });
 
 let started = false;
@@ -597,7 +623,19 @@ function frame(now: number) {
 
   syncCupBtn();
 
+  const pour = studio.pour;
+  sound.update({
+    torchTool: tool === 'torch' && started,
+    torchOn: !!studio.torch,
+    pouring: !!pour,
+    intoCup: !!pour && studio.hitsCup(pour.x, pour.y, 1.15),
+    flow: simulate ? Math.hypot(t.x, t.y) / P.tiltMax : 0,
+  });
+  const lifting = !!studio.cup?.lifting;
+  if (lifting && !wasLifting) sound.lift();
+  wasLifting = lifting;
 }
+let wasLifting = false;
 
 setTool('pour', false);
 usePalette(paletteIdx);
@@ -605,4 +643,4 @@ selectPaint(0);
 requestAnimationFrame(frame);
 
 // debugging handle
-Object.assign(window, { __pour: { get sim() { return sim; }, get studio() { return studio; }, get demo() { return demo; }, tilt, P } });
+Object.assign(window, { __pour: { get sim() { return sim; }, get studio() { return studio; }, get demo() { return demo; }, tilt, sound, P } });

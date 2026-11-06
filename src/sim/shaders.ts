@@ -168,7 +168,11 @@ void main() {
   vec2 p = x * uDom;
   vec2 v1 = texture(uV, x).xy / uDom;
   vec2 v2 = texture(uV, x - 0.5 * uDt * uSurfK * v1).xy / uDom;
-  vec2 xs = x - uDt * uSurfK * v2;
+  // torch: the hot surface flows away from the flame (Marangoni flow)
+  vec2 td = p - uTorch.xy;
+  float tr = max(uTorch.z, 1e-4);
+  vec2 mar = 0.02 * uTorch.w * td / tr * exp(-dot(td, td) / (tr * tr) * 1.5);
+  vec2 xs = x - uDt * (uSurfK * v2 + mar / uDom);
   vec2 xu = x - uDt * uSubK * v2;
 
   vec4 S = sharpen(uS, xs, cr(uS, xs));
@@ -199,8 +203,7 @@ void main() {
 
   // submerged paint rises back to the surface inside cells
   float m = texture(uMask, x).r;
-  float tq = length(p - uTorch.xy) / max(uTorch.z, 1e-4);
-  float heat = uTorch.w * exp(-tq * tq * 2.0);
+  float heat = uTorch.w * exp(-dot(td, td) / (tr * tr) * 2.0);
   float t = 1.0 - exp(-uRise * (1.0 + heat) * m * uDt);
   S += t * U; U -= t * U;
   G.x += t * G.y; G.y -= t * G.y;

@@ -12,8 +12,9 @@ export const M = {
   colorR: 0.03,
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
-  torchR: 0.08, // radius of the torch flame
-  torchCells: 600, // cells per second under the flame
+  torchR: 0.09, // radius of the torch flame
+  torchCells: 900, // cells per second under the flame
+  torchHeat: 6, // how much faster paint rises under the flame
   // The cup wall holds the paint back: at rest only a little seeps out under
   // the rim. Moving the cup lets paint escape; lifting releases the rest.
   leakRest: 0.08, // fraction of the contents per second
@@ -149,13 +150,13 @@ export class Studio {
   }
 
   /** spawn `rate` cells per second in an annulus (r0..r1) around (x, y) */
-  private spawnCells(key: string, dt: number, rate: number, x: number, y: number, r0: number, r1: number, life: [number, number]) {
+  private spawnCells(key: string, dt: number, rate: number, x: number, y: number, r0: number, r1: number, life: [number, number], size = 1) {
     this.spawnAcc[key] = (this.spawnAcc[key] || 0) + rate * dt;
     while (this.spawnAcc[key] >= 1) {
       this.spawnAcc[key] -= 1;
       const a = Math.random() * Math.PI * 2;
       const r = Math.sqrt(r0 * r0 + Math.random() * (r1 * r1 - r0 * r0));
-      this.sim.addCell(x + Math.cos(a) * r, y + Math.sin(a) * r, life[0] + Math.random() * life[1]);
+      this.sim.addCell(x + Math.cos(a) * r, y + Math.sin(a) * r, life[0] + Math.random() * life[1], size);
     }
   }
 
@@ -263,7 +264,7 @@ export class Studio {
 
     // the torch makes cells pop up under the flame
     const tq = this.torch;
-    if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR, [0.35, 0.5]);
+    if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR, [0.6, 0.8], 1.7);
 
     if (this.push) {
       const p = this.push;
@@ -271,7 +272,7 @@ export class Studio {
       pushVel[1] = clampVel(p.vx, p.vy);
     }
 
-    return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, 2] : [0, 0, 1, 0] };
+    return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, M.torchHeat] : [0, 0, 1, 0] };
   }
 
   overlay(view: [number, number]): Overlay {
