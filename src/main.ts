@@ -3,7 +3,7 @@ import { Demo } from './demo';
 import { mountIcons } from './icons';
 import { Studio } from './model';
 import { GL } from './sim/gl';
-import { MATS } from './sim/materials';
+import { MATS, PALETTES, setPalette, type Material } from './sim/materials';
 import { P, Sim, type Quality } from './sim/sim';
 import { TiltInput } from './tilt';
 
@@ -15,7 +15,7 @@ const canvas = $<HTMLCanvasElement>('#gl');
 const hintEl = $('#hint');
 const paintsEl = $('#paints');
 const cupBtn = $<HTMLButtonElement>('#tools [data-tool="cup"]');
-const torchBtn = $<HTMLButtonElement>('#torchBtn');
+const paletteSheet = $('#palettes');
 const sheet = $('#sheet');
 const startEl = $('#start');
 
@@ -121,15 +121,28 @@ function hint(text: string, ms = 4000) {
 // ---------------------------------------------------------------- paints
 let paint = 0;
 const PAINT_ORDER = [0, 1, 2, 3, 4, 5];
-for (const m of PAINT_ORDER) {
-  const b = document.createElement('button');
-  b.className = 'swatch';
-  b.setAttribute('role', 'radio');
-  b.setAttribute('aria-label', MATS[m].name);
-  b.dataset.m = String(m);
-  b.innerHTML = `<i style="background:${MATS[m].hex}"></i>`;
-  b.addEventListener('click', () => selectPaint(m, true));
-  paintsEl.append(b);
+
+/** swatch background: metal gets a highlight, pearl a shimmer in its sheen colour */
+function swatchBg(m: Material) {
+  if (m.finish === 'metal') return `linear-gradient(135deg, rgba(255,255,255,0.6), transparent 45%, rgba(0,0,0,0.25)), ${m.hex}`;
+  if (m.finish === 'pearl') return `linear-gradient(135deg, ${m.sheen}aa, transparent 55%), ${m.hex}`;
+  return m.hex;
+}
+
+function buildSwatches() {
+  paintsEl.innerHTML = '';
+  for (const m of PAINT_ORDER) {
+    const b = document.createElement('button');
+    b.className = 'swatch';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-label', MATS[m].name);
+    b.dataset.m = String(m);
+    const i = document.createElement('i');
+    i.style.background = swatchBg(MATS[m]);
+    b.append(i);
+    b.addEventListener('click', () => selectPaint(m, true));
+    paintsEl.append(b);
+  }
 }
 function selectPaint(m: number, announce = false) {
   paint = m;
@@ -138,8 +151,59 @@ function selectPaint(m: number, announce = false) {
   if (announce) hint(studio.cup && !studio.cup.lifting ? `${MATS[m].name} – hold on the cup to pour it in` : `${MATS[m].name} – hold to pour`);
 }
 
+// palettes: the choice is kept for the next visit. Paint on the canvas takes
+// the new colours too, so you can compare palettes on the same picture.
+const PALETTE_KEY = 'pour.palette';
+let paletteIdx = 0;
+try {
+  paletteIdx = Math.max(0, PALETTES.findIndex(p => p.name === localStorage.getItem(PALETTE_KEY)));
+} catch {
+  /* no storage */
+}
+function usePalette(i: number, announce = false) {
+  paletteIdx = i;
+  setPalette(PALETTES[i]);
+  buildSwatches();
+  paintsEl.querySelector(`[data-m="${paint}"]`)?.setAttribute('aria-checked', 'true');
+  wake();
+  try {
+    localStorage.setItem(PALETTE_KEY, PALETTES[i].name);
+  } catch {
+    /* no storage */
+  }
+  if (announce) hint(PALETTES[i].name, 2000);
+}
+const palettePanel = paletteSheet.querySelector('.sheet-panel')!;
+function buildPaletteSheet() {
+  palettePanel.innerHTML = '';
+  PALETTES.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'pal';
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(i === paletteIdx));
+    const dots = document.createElement('span');
+    dots.className = 'dots';
+    for (const d of p.paints) {
+      const [name, hex, finish = 'matte', sheen = '#ffffff'] = d;
+      const dot = document.createElement('i');
+      dot.style.background = swatchBg({ name, hex, finish, sheen } as Material);
+      dots.append(dot);
+    }
+    const label = document.createElement('span');
+    label.textContent = p.name;
+    b.append(label, dots);
+    b.addEventListener('click', () => usePalette(i, true));
+    palettePanel.append(b);
+  });
+}
+$('#paletteBtn').addEventListener('click', () => {
+  buildPaletteSheet();
+  paletteSheet.hidden = false;
+});
+paletteSheet.addEventListener('click', () => (paletteSheet.hidden = true));
+
 // ---------------------------------------------------------------- tools
-type Tool = 'pour' | 'cup' | 'swipe' | 'tilt';
+type Tool = 'pour' | 'cup' | 'swipe' | 'torch' | 'tilt';
 let tool: Tool = 'pour';
 function toolHint() {
   switch (tool) {
@@ -152,6 +216,8 @@ function toolHint() {
       return 'Tap to set the cup into the paint';
     case 'swipe':
       return 'Drag through wet paint to push it';
+    case 'torch':
+      return 'Move the flame over the paint to make cells';
     case 'tilt':
       if (tilt.mode === 'sensor') return 'Tilt your phone · tap the canvas to level again';
       if (tilt.mode === 'pending') return 'Tilt your phone …';
@@ -238,6 +304,8 @@ canvas.addEventListener('pointerdown', e => {
     drag.cy = p.y;
   } else if (tool === 'swipe') {
     studio.push = { x: p.x, y: p.y, vx: 0, vy: 0, r: 0.045 };
+  } else if (tool === 'torch') {
+    studio.torch = { x: p.x, y: p.y };
   }
 });
 
@@ -273,6 +341,9 @@ canvas.addEventListener('pointermove', e => {
     studio.pour.y = p.y;
   } else if (tool === 'swipe' && studio.push) {
     Object.assign(studio.push, { x: p.x, y: p.y, vx: drag.vx, vy: drag.vy });
+  } else if (tool === 'torch' && studio.torch) {
+    studio.torch.x = p.x;
+    studio.torch.y = p.y;
   } else if (tool === 'tilt' && tilt.mode !== 'sensor') {
     let x = ((p.x - drag.sx) / sim.dom[0]) * 3,
       y = ((p.y - drag.sy) / sim.dom[0]) * 3;
@@ -292,6 +363,7 @@ function endDrag(e: PointerEvent) {
   drag = null;
   studio.pour = null;
   studio.push = null;
+  studio.torch = null;
   markPouring(false);
   if (tool === 'tilt') {
     manualTilt.x = manualTilt.y = 0;
@@ -318,19 +390,6 @@ function lift() {
   studio.liftCup();
   navigator.vibrate?.([8, 40, 8]);
 }
-
-const torch = (on: boolean) => {
-  studio.torch = on;
-  torchBtn.classList.toggle('on', on);
-};
-torchBtn.addEventListener('pointerdown', e => {
-  torchBtn.setPointerCapture(e.pointerId);
-  demo.stop();
-  torch(true);
-});
-for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) torchBtn.addEventListener(ev, () => torch(false));
-torchBtn.addEventListener('contextmenu', e => e.preventDefault());
-
 
 // menu
 $('#menuBtn').addEventListener('click', () => (sheet.hidden = false));
@@ -380,7 +439,7 @@ addEventListener('blur', () => {
   for (const k in keysTilt) keysTilt[k] = false;
   studio.pour = null;
   studio.push = null;
-  torch(false);
+  studio.torch = null;
 });
 
 // ---------------------------------------------------------------- tilt + start
@@ -506,7 +565,7 @@ function frame(now: number) {
   // Idle: when nothing moves, the paint stops (yield stress). Then skip the
   // simulation and draw only when the view changes. Saves GPU and battery.
   const busy =
-    demo.active || !!drag || !!studio.pour || !!studio.push || studio.torch || !!studio.cup ||
+    demo.active || !!drag || !!studio.pour || !!studio.push || !!studio.torch || !!studio.cup ||
     Math.hypot(t.tx, t.ty) > 0 || Math.hypot(t.x, t.y) > 1e-3;
   if (busy) lastBusy = now;
   const simulate = (busy || studio.dirty) && now - lastBusy < SETTLE_MS;
@@ -541,6 +600,7 @@ function frame(now: number) {
 }
 
 setTool('pour', false);
+usePalette(paletteIdx);
 selectPaint(0);
 requestAnimationFrame(frame);
 

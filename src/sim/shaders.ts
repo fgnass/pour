@@ -121,6 +121,7 @@ export const PIG_FS = COMMON + HASH + `
 uniform sampler2D uS, uU, uG, uV, uMask;
 uniform vec2 uSize, uDom;
 uniform float uDt, uSurfK, uSubK, uRise, uSharpen, uTime;
+uniform vec4 uTorch; // x, y, radius, strength: heat makes paint rise faster
 uniform vec4 uSrc[${NUM_SRC}];
 uniform vec4 uSrcS[${NUM_SRC}];
 uniform vec4 uSrcU[${NUM_SRC}];
@@ -198,7 +199,9 @@ void main() {
 
   // submerged paint rises back to the surface inside cells
   float m = texture(uMask, x).r;
-  float t = 1.0 - exp(-uRise * m * uDt);
+  float tq = length(p - uTorch.xy) / max(uTorch.z, 1e-4);
+  float heat = uTorch.w * exp(-tq * tq * 2.0);
+  float t = 1.0 - exp(-uRise * (1.0 + heat) * m * uDt);
   S += t * U; U -= t * U;
   G.x += t * G.y; G.y -= t * G.y;
 
@@ -253,6 +256,10 @@ uniform sampler2D uV, uS, uU, uG;
 uniform vec2 uDom, uPSize;
 uniform float uDx;       // thickness cell size (domain units)
 uniform vec3 uCol[6];
+uniform vec3 uSheen[6];  // pearl shimmer colour per paint
+uniform float uPearl[6]; // 1 for pearl paints
+uniform float uMetal[6]; // 1 for metallic paints
+uniform vec4 uTorch;     // x, y, radius, active
 uniform vec2 uView;      // tilt of the board relative to the viewer
 uniform float uPx;       // domain units per screen pixel
 uniform vec4 uCup;       // x, y, radius, alpha
@@ -330,9 +337,19 @@ void main() {
   vec3 fn = normalize(n + (hs - 0.5) * 0.9);
   vec3 L = normalize(vec3(-0.3, 0.42, 1.0));
   float glint = pow(max(dot(reflect(-vdir, fn), L), 0.0), 60.0);
-  float irid = c.x + c.w;
-  vec3 sheen = mix(vec3(0.35, 0.45, 1.0), vec3(0.6, 1.0, 0.7), c.w / (irid + 1e-4));
-  base += irid * 0.9 * glint * sheen + gold * 2.5 * glint * vec3(1.0, 0.75, 0.3);
+  // finishes of the paints in this mix (index: 0 base, 1, 2, 3 = gold channel, 4, 5)
+  float W[6] = float[6](0.0, c.x, c.y, gold, c.z, c.w);
+  float irid = 0.0, metal = 0.0;
+  vec3 sheen = vec3(0.0), mtint = vec3(0.0);
+  for (int i = 1; i < 6; i++) {
+    irid += W[i] * uPearl[i];
+    sheen += W[i] * uPearl[i] * uSheen[i];
+    metal += W[i] * uMetal[i];
+    mtint += W[i] * uMetal[i] * uCol[i] / max(max(uCol[i].r, uCol[i].g), max(uCol[i].b, 0.05));
+  }
+  sheen /= irid + 1e-4;
+  mtint /= metal + 1e-4;
+  base += irid * 0.9 * glint * sheen + metal * 2.5 * glint * mtint;
   float shift = dot(n.xy, vec2(0.7, 0.7)) * 4.0;
   base += 0.06 * irid * sheen * (0.5 + 0.5 * sin(shift * 6.0 + p.x * 20.0));
 
@@ -370,6 +387,14 @@ void main() {
     col = mix(col, sc, s * uStream.w);
     float ring = 1.0 - smoothstep(0.0, uPx * 1.5, abs(d - uStream.z * 2.4));
     col += ring * 0.08 * uStream.w;
+  }
+
+  // torch: a warm glow where the flame points
+  if (uTorch.w > 0.0) {
+    float d = length(p - uTorch.xy) / uTorch.z;
+    col += vec3(1.0, 0.55, 0.2) * 0.22 * uTorch.w * exp(-d * d * 2.5);
+    float ring = 1.0 - smoothstep(0.0, uPx * 1.5, abs(d - 1.0) * uTorch.z);
+    col += ring * 0.12 * uTorch.w * vec3(1.0, 0.7, 0.4);
   }
 
   o = vec4(pow(max(col, 0.0), vec3(1.0 / 2.2)), 1.0);

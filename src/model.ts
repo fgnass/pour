@@ -12,7 +12,8 @@ export const M = {
   colorR: 0.03,
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
-  torchCells: 2500,
+  torchR: 0.08, // radius of the torch flame
+  torchCells: 600, // cells per second under the flame
   // The cup wall holds the paint back: at rest only a little seeps out under
   // the rim. Moving the cup lets paint escape; lifting releases the rest.
   leakRest: 0.08, // fraction of the contents per second
@@ -50,7 +51,8 @@ export class Studio {
   /** paint that is being poured right now (from the user or the demo) */
   pour: Pour | null = null;
   push: Push | null = null;
-  torch = false;
+  /** where the torch points, or null */
+  torch: { x: number; y: number } | null = null;
   /** tilt of the canvas (x, y), smoothed towards target */
   tilt = { x: 0, y: 0, tx: 0, ty: 0 };
   /** true once any paint is on the canvas */
@@ -65,7 +67,7 @@ export class Studio {
     this.cup = null;
     this.pour = null;
     this.push = null;
-    this.torch = false;
+    this.torch = null;
     this.dirty = false;
     this.sim.reset();
   }
@@ -255,9 +257,13 @@ export class Studio {
       }
     }
 
-    // while the paint flows and under the torch more cells pop up
+    // while the paint flows more cells pop up
     const flow = Math.min(1, Math.hypot(t.x, t.y) / P.tiltMax);
-    this.spawnEverywhere(dt, (M.tiltCells * flow + (this.torch ? M.torchCells : 0)) / 1.6);
+    this.spawnEverywhere(dt, (M.tiltCells * flow) / 1.6);
+
+    // the torch makes cells pop up under the flame
+    const tq = this.torch;
+    if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR, [0.35, 0.5]);
 
     if (this.push) {
       const p = this.push;
@@ -265,7 +271,7 @@ export class Studio {
       pushVel[1] = clampVel(p.vx, p.vy);
     }
 
-    return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, riseK: this.torch ? 2.5 : 1 };
+    return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, 2] : [0, 0, 1, 0] };
   }
 
   overlay(view: [number, number]): Overlay {
@@ -274,6 +280,7 @@ export class Studio {
       view,
       cup: c ? { x: c.x, y: c.y, R: c.R, alpha: c.alpha, col: this.cupColor(), fill: Math.min(1, this.cupVolume() / 0.03) } : null,
       stream: this.stream,
+      torch: this.torch ? { ...this.torch, r: M.torchR } : null,
     };
   }
 }

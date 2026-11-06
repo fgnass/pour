@@ -23,7 +23,12 @@
       </header>
 
       <footer class="dock">
-        <div id="paints" class="paints" role="radiogroup" aria-label="Paint"></div>
+        <div class="paints">
+          <button id="paletteBtn" class="swatch palette-btn" aria-label="Palette">
+            <span class="icon" data-icon="palette"></span>
+          </button>
+          <div id="paints" role="radiogroup" aria-label="Paint"></div>
+        </div>
         <div class="tools">
           <div class="seg" id="tools" role="radiogroup" aria-label="Tool">
             <button data-tool="pour" role="radio">
@@ -38,15 +43,15 @@
               <span class="icon" data-icon="swipe" data-fill></span>
               <span>Swipe</span>
             </button>
+            <button data-tool="torch" role="radio">
+              <span class="icon" data-icon="local_fire_department" data-fill></span>
+              <span>Torch</span>
+            </button>
             <button data-tool="tilt" role="radio">
               <span class="icon" data-icon="3d_rotation" data-fill></span>
               <span>Tilt</span>
             </button>
           </div>
-          <button id="torchBtn" class="act">
-            <span class="icon" data-icon="local_fire_department" data-fill></span>
-            <span>Torch</span>
-          </button>
         </div>
       </footer>
     </div>
@@ -60,6 +65,10 @@
       </div>
     </div>
 
+    <div id="palettes" class="sheet sheet-bottom" hidden>
+      <div class="sheet-panel" role="dialog" aria-label="Palettes"></div>
+    </div>
+
     <div id="start" class="start">
       <div class="start-panel">
         <h1>Pour</h1>
@@ -69,6 +78,7 @@
           <li>Set the <b>cup</b> into it.</li>
           <li>Pour <b>colours</b> into the cup. They sink under the white.</li>
           <li>Drag the cup off in a spiral, then <b>lift</b> it.</li>
+          <li>Move the <b>torch</b> over the paint to make cells.</li>
           <li><b>Tilt</b> your phone until the paint covers the canvas.</li>
         </ol>
         <p class="note">Tilt only acts while the Tilt tool is on. The pose at the moment you turn it on counts as flat.</p>

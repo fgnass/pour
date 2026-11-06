@@ -33,13 +33,15 @@ export type Forces = {
   pushVel: [number, number][];
   swirl: [number, number, number, number];
   src: Source[]; // NUM_SRC entries
-  riseK: number;
+  /** x, y, radius, strength */
+  torch: [number, number, number, number];
 };
 
 export type Overlay = {
   view: [number, number];
   cup: { x: number; y: number; R: number; alpha: number; col: number[]; fill: number } | null;
   stream: { x: number; y: number; col: number[] } | null;
+  torch: { x: number; y: number; r: number } | null;
 };
 
 export type Quality = { n: number; np: number };
@@ -288,7 +290,8 @@ export class Sim {
     gl.uniform1f(p.uni.uSurfK, P.surfK);
     gl.uniform1f(p.uni.uSubK, P.subK);
     gl.uniform1f(p.uni.uSharpen, 0.015);
-    gl.uniform1f(p.uni.uRise, P.rise * f.riseK);
+    gl.uniform1f(p.uni.uRise, P.rise);
+    gl.uniform4f(p.uni.uTorch, ...f.torch);
     this.setSources(p, f.src);
     gl.uniform4fv(p.uni.uSrcS, f.src.flatMap(s => s.s));
     gl.uniform4fv(p.uni.uSrcU, f.src.flatMap(s => s.u));
@@ -312,6 +315,11 @@ export class Sim {
     gl.uniform2f(p.uni.uPSize, this.PX, this.PY);
     gl.uniform1f(p.uni.uDx, this.dx);
     gl.uniform3fv(p.uni.uCol, MATS.flatMap(m => m.rgb));
+    gl.uniform3fv(p.uni.uSheen, MATS.flatMap(m => m.sheenRgb));
+    gl.uniform1fv(p.uni.uPearl, MATS.map(m => +(m.finish === 'pearl')));
+    gl.uniform1fv(p.uni.uMetal, MATS.map(m => +(m.finish === 'metal')));
+    if (o.torch) gl.uniform4f(p.uni.uTorch, o.torch.x, o.torch.y, o.torch.r, 1);
+    else gl.uniform4f(p.uni.uTorch, 0, 0, 1, 0);
     gl.uniform2f(p.uni.uView, ...o.view);
     gl.uniform1f(p.uni.uPx, this.dom[0] / width);
     if (o.cup) {

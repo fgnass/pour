@@ -162,6 +162,19 @@ svg {
   background: var(--glass);
   border: 1px solid var(--line);
 }
+#paints {
+  display: flex;
+  gap: 6px;
+}
+.palette-btn {
+  color: var(--muted);
+  border-right: 1px solid var(--line);
+  border-radius: 50% 0 0 50%;
+  padding-right: 2px;
+}
+.palette-btn:active {
+  color: var(--text);
+}
 .swatch {
   width: 42px;
   height: 42px;
@@ -198,8 +211,7 @@ svg {
   background: var(--glass);
   border: 1px solid var(--line);
 }
-.seg button,
-.act {
+.seg button {
   flex: 1;
   min-height: 54px;
   display: flex;
@@ -219,22 +231,7 @@ svg {
   background: rgba(255, 255, 255, 0.14);
   color: var(--text);
 }
-.act {
-  flex: none;
-  width: 60px;
-  border-radius: 18px;
-  color: var(--text);
-  background: var(--glass);
-  border: 1px solid var(--line);
-}
-.act:disabled {
-  color: rgba(255, 255, 255, 0.28);
-}
-.act.on,
-.act:active:not(:disabled) {
-  background: rgba(62, 64, 70, 0.9);
-}
-#torchBtn.on {
+.seg button[data-tool='torch'][aria-checked='true'] {
   color: #ffb45e;
 }
 
@@ -269,6 +266,38 @@ svg {
 .sheet-panel button:active {
   background: var(--glass-hi);
 }
+
+/* palette chooser: a panel above the dock */
+.sheet-bottom {
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 12px calc(var(--sab) + 150px);
+}
+.sheet-bottom .sheet-panel {
+  width: min(100%, 360px);
+  max-height: calc(100% - 20px);
+  overflow-y: auto;
+}
+.pal {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pal[aria-checked='true'] {
+  background: rgba(255, 255, 255, 0.1);
+}
+.pal .dots {
+  display: flex;
+}
+.pal .dots i {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  margin-left: -4px;
+  border: 1.5px solid rgba(28, 29, 33, 0.92);
+}
+
 
 /* ------------------------------------------------------------------ start */
 .start {

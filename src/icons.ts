@@ -11,6 +11,7 @@ import rotationFill from '@material-symbols/svg-400/rounded/3d_rotation-fill.svg
 import upload from '@material-symbols/svg-400/rounded/upload.svg?raw';
 import fire from '@material-symbols/svg-400/rounded/local_fire_department.svg?raw';
 import fireFill from '@material-symbols/svg-400/rounded/local_fire_department-fill.svg?raw';
+import palette from '@material-symbols/svg-400/rounded/palette.svg?raw';
 
 const ICONS: Record<string, [string, string?]> = {
   menu: [menu],
@@ -20,6 +21,7 @@ const ICONS: Record<string, [string, string?]> = {
   '3d_rotation': [rotation, rotationFill],
   upload: [upload],
   local_fire_department: [fire, fireFill],
+  palette: [palette],
 };
 
 const clean = (svg: string, cls: string) => svg.replace(/ width="\d+" height="\d+"/, '').replace('<svg ', `<svg class="${cls}" aria-hidden="true" `);

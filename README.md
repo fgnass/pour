@@ -23,7 +23,10 @@ URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels p
   colours sink below the white.
 - **Cup**: tap to set it down. While it sits on the canvas, the Cup button is Lift. Hold on the cup to pour
   into it, drag from the cup to move it.
-- **Swipe** pushes wet paint, **Torch** makes more cells pop up.
+- **Swipe** pushes wet paint. **Torch** makes cells pop up under the finger.
+- The palette button (left of the paints) picks a colour palette. Paint on the
+  canvas takes the new colours too. Palettes live in `src/sim/materials.ts`;
+  each paint can be `matte`, `pearl` or `metal`.
 
 Code: `src/sim/` (GL, shaders, solver), `src/model.ts` (cup, sources, cells), `src/tilt.ts`,
 `src/demo.ts`, `src/main.ts` (UI and gestures).

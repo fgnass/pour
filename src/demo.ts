@@ -46,7 +46,7 @@ export class Demo {
     const s = this.studio;
     s.pour = null;
     s.push = null;
-    s.torch = false;
+    s.torch = null;
     this.tick();
     this.onChange?.(false);
   }
