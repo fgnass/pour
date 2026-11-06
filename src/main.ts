@@ -515,8 +515,10 @@ function frame(now: number) {
     canvas.style.transform = '';
   } else {
     view = [t.x, t.y];
-    const s = 1 - 0.12 * Math.min(1, Math.hypot(t.x, t.y) / P.tiltMax);
-    canvas.style.transform = `scale(${s}) rotateX(${t.y * 22}deg) rotateY(${t.x * 22}deg)`;
+    // 3D transform only while tilted: a permanent one keeps the canvas on a 3D layer
+    const m = Math.hypot(t.x, t.y);
+    const s = 1 - 0.12 * Math.min(1, m / P.tiltMax);
+    canvas.style.transform = m > 1e-3 ? `scale(${s}) rotateX(${t.y * 22}deg) rotateY(${t.x * 22}deg)` : '';
   }
   const viewMoved = Math.hypot(view[0] - lastView[0], view[1] - lastView[1]) > 0.003;
   if (simulate || viewMoved || saveRequested || needsDraw) {
