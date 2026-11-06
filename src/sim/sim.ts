@@ -1,6 +1,6 @@
 import { GL, type Program } from './gl';
 import { MATS } from './materials';
-import { CLEAR_FS, FLUX_FS, MASK_FS, MASK_VS, NUM_SRC, PART_FS, PIG_FS, RENDER_FS, VEL_FS } from './shaders';
+import { CLEAR_FS, FLUX_FS, GLIT_FS, GLITTER_FS, GLITTER_VS, MASK_FS, MASK_VS, NUM_SRC, PART_FS, PIG_FS, RENDER_FS, VEL_FS } from './shaders';
 
 // Physical parameters (domain units: the short side of the canvas is 1).
 export const P = {
@@ -58,6 +58,10 @@ export type Quality = { n: number; np: number };
 
 const PW = 256;
 const PCOUNT = PW * PW;
+// glitter flakes
+const GW = 256,
+  GH = 512,
+  GCOUNT = GW * GH;
 const MAX_SUB = 60;
 
 /** Fastest imposed velocity (cup wall, swipe, twist); the model clamps to this. */
@@ -83,6 +87,9 @@ export class Sim {
   private PSfb: WebGLFramebuffer[];
   private PT: WebGLTexture[];
   private PTfb: WebGLFramebuffer[];
+  private GT: WebGLTexture[];
+  private GTfb: WebGLFramebuffer[];
+  private gi = 0;
   private MASK: WebGLTexture;
   private MASKfb: WebGLFramebuffer;
   private hi = 0;
@@ -90,7 +97,7 @@ export class Sim {
   private ppi = 0;
   private pRing = 0;
   private spawns: number[] = [];
-  private prog: Record<'flux' | 'vel' | 'pig' | 'render' | 'clear' | 'part' | 'mask', Program>;
+  private prog: Record<'flux' | 'vel' | 'pig' | 'render' | 'clear' | 'part' | 'mask' | 'glit' | 'glitter', Program>;
   private resources: { tex: WebGLTexture[]; fb: WebGLFramebuffer[] } = { tex: [], fb: [] };
 
   constructor(g: GL, aspect: number, q: Quality) {
@@ -126,6 +133,8 @@ export class Sim {
     this.PSfb = this.PS.map(fbo);
     this.PT = [0, 1].map(() => tex(PW, PW, gl.RGBA32F, false));
     this.PTfb = this.PT.map(t => fbo([t]));
+    this.GT = [0, 1].map(() => tex(GW, GH, gl.RGBA32F, false));
+    this.GTfb = this.GT.map(t => fbo([t]));
     this.MASK = tex(this.PX, this.PY, gl.RGBA8, true);
     this.MASKfb = fbo([this.MASK]);
 
@@ -137,6 +146,8 @@ export class Sim {
       clear: g.compile(CLEAR_FS),
       part: g.compile(PART_FS),
       mask: g.compile(MASK_FS, MASK_VS),
+      glit: g.compile(GLIT_FS),
+      glitter: g.compile(GLITTER_FS, GLITTER_VS),
     };
     this.reset();
   }
@@ -151,7 +162,7 @@ export class Sim {
   reset() {
     const gl = this.g.gl;
     gl.clearColor(0, 0, 0, 0);
-    for (const f of [...this.Hfb, ...this.PTfb, this.Vfb]) {
+    for (const f of [...this.Hfb, ...this.PTfb, ...this.GTfb, this.Vfb]) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, f);
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
@@ -272,6 +283,18 @@ export class Sim {
     g.draw(this.PTfb[1 - this.ppi], PW, PW);
     this.ppi = 1 - this.ppi;
 
+    // glitter rides on the surface
+    p = this.prog.glit;
+    gl.useProgram(p.prog);
+    g.bindTex(p, 'uP', 0, this.GT[this.gi]);
+    g.bindTex(p, 'uV', 1, this.V);
+    gl.uniform2f(p.uni.uDom, ...this.dom);
+    gl.uniform1f(p.uni.uDt, dt);
+    gl.uniform1f(p.uni.uK, P.surfK);
+    gl.uniform1f(p.uni.uTime, this.time);
+    g.draw(this.GTfb[1 - this.gi], GW, GH);
+    this.gi = 1 - this.gi;
+
     p = this.prog.mask;
     gl.useProgram(p.prog);
     g.bindTex(p, 'uP', 0, this.PT[this.ppi]);
@@ -355,6 +378,35 @@ export class Sim {
       gl.uniform3fv(p.uni.uStreamCol, o.stream.col);
     } else gl.uniform4f(p.uni.uStream, 0, 0, 0, 0);
     g.draw(null, width, height);
+    this.renderGlitter(o, width);
+  }
+
+  private renderGlitter(o: Overlay, width: number) {
+    const g = this.g;
+    const gl = g.gl;
+    const p = this.prog.glitter;
+    gl.useProgram(p.prog);
+    g.bindTex(p, 'uP', 0, this.GT[this.gi]);
+    g.bindTex(p, 'uV', 1, this.V);
+    ['uS', 'uU', 'uG'].forEach((nm, i) => g.bindTex(p, nm, i + 2, this.PS[this.pi][i]));
+    gl.uniform1i(p.uni.uPW, GW);
+    gl.uniform2f(p.uni.uDom, ...this.dom);
+    gl.uniform1f(p.uni.uDx, this.dx);
+    gl.uniform1f(p.uni.uTime, this.time);
+    gl.uniform2f(p.uni.uView, ...o.view);
+    // a flake is about one screen pixel at 390 px width, a bit more on big screens
+    gl.uniform1f(p.uni.uPtSize, Math.max(2, (width / this.dom[0]) * 0.0022));
+    const c = o.cup;
+    gl.uniform4f(p.uni.uCup, c?.x ?? 0, c?.y ?? 0, c?.R ?? 0, c ? c.alpha : 0);
+    gl.uniform3fv(p.uni.uCol, MATS.flatMap(m => m.rgb));
+    gl.uniform3fv(p.uni.uSheen, MATS.flatMap(m => m.sheenRgb));
+    gl.uniform1fv(p.uni.uPearl, MATS.map(m => +(m.finish === 'pearl')));
+    gl.uniform1fv(p.uni.uMetal, MATS.map(m => +(m.finish === 'metal')));
+    gl.enable(gl.BLEND);
+    gl.blendEquation(gl.FUNC_ADD);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    g.points(GCOUNT);
+    gl.disable(gl.BLEND);
   }
 
   /** Reads the image that render() just drew (call in the same frame). */

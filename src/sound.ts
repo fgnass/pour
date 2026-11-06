@@ -11,8 +11,8 @@
 // "Guck, Slime, slippery Jelly" by breiti.
 import swipeEvents from './swipe-events.json';
 
-const POUR_RATE = 0.55; // onto the canvas
-const CUP_POUR_RATE = 0.62; // into the cup
+const POUR_RATE = 0.45; // onto the canvas
+const CUP_POUR_RATE = 0.52; // into the cup
 const SWIPE_RATE = 0.7;
 const CUP_DRAG_RATE = 0.5;
 
