@@ -194,7 +194,7 @@ function selectPaint(m: number, announce = false) {
   paint = m;
   paintsEl.querySelectorAll<HTMLElement>('.swatch').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.m! === m)));
   if (tool !== 'pour') setTool('pour', false);
-  if (announce) hint(studio.cup && !studio.cup.lifting ? `${MATS[m].name} – hold on the cup to pour it in` : `${MATS[m].name} – hold to pour`);
+  if (announce) hint(studio.cup && !studio.cup.lifting ? `${MATS[m].name} – hold to pour it into the cup` : `${MATS[m].name} – hold to pour`);
 }
 
 // palettes: the choice is kept for the next visit. Paint on the canvas takes
@@ -255,7 +255,7 @@ function toolHint() {
   switch (tool) {
     case 'pour':
       return studio.cup && !studio.cup.lifting
-        ? 'Hold on the cup to pour into it · drag the cup to move it'
+        ? 'Hold to pour into the cup · drag the cup to move it'
         : `Hold to pour ${MATS[paint].name.toLowerCase()}`;
     case 'cup':
       if (studio.cup?.lifting) return 'Lifting the cup …';
@@ -336,6 +336,11 @@ function inCup(p: { x: number; y: number }) {
   return { x: c.x + dx * k, y: c.y + dy * k };
 }
 
+/** where paint lands: into the cup while one stands on the canvas, else under the finger */
+function pourPoint(p: { x: number; y: number }) {
+  return studio.cup && !studio.cup.lifting ? inCup(p) : { x: p.x, y: p.y };
+}
+
 canvas.addEventListener('pointerdown', e => {
   wake();
   if (drag) return;
@@ -357,7 +362,8 @@ canvas.addEventListener('pointerdown', e => {
       markPouring(true);
     }
   } else if (tool === 'pour') {
-    studio.pour = { m: paint, x: p.x, y: p.y };
+    // with a cup on the canvas, pouring always fills the cup
+    studio.pour = { m: paint, ...pourPoint(p) };
     markPouring(true);
   } else if (tool === 'cup' && !cup) {
     studio.placeCup(p.x, p.y);
@@ -400,8 +406,7 @@ canvas.addEventListener('pointermove', e => {
       Object.assign(studio.pour, inCup(p));
     }
   } else if (tool === 'pour' && studio.pour) {
-    studio.pour.x = p.x;
-    studio.pour.y = p.y;
+    Object.assign(studio.pour, pourPoint(p));
   } else if (tool === 'swipe' && studio.push) {
     Object.assign(studio.push, { x: p.x, y: p.y, vx: drag.vx, vy: drag.vy });
   } else if (tool === 'torch' && studio.torch) {
@@ -436,7 +441,7 @@ function endDrag(e: PointerEvent) {
     // freshly placed: next step is pouring into it
     setTool('pour', false);
     syncCupBtn();
-    hint('Hold on the cup to pour colours into it');
+    hint('Hold to pour colours into the cup');
   }
 }
 canvas.addEventListener('pointerup', endDrag);

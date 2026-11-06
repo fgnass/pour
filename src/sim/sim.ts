@@ -23,6 +23,9 @@ export type Source = {
   u: number[];
   g: number[];
   streak: number;
+  /** start of the segment the source swept over this frame (default: x, y) */
+  x0?: number;
+  y0?: number;
   /** 0..1: new paint pushes the old paint away instead of mixing into it */
   plug?: number;
 };
@@ -232,6 +235,7 @@ export class Sim {
   }
   private setSources(p: Program, src: Source[]) {
     this.g.gl.uniform4fv(p.uni.uSrc, src.flatMap(s => [s.x, s.y, s.r, s.rate]));
+    this.g.gl.uniform2fv(p.uni.uSrcA, src.flatMap(s => [s.x0 ?? s.x, s.y0 ?? s.y]));
   }
   private setFilm(p: Program) {
     const gl = this.g.gl;

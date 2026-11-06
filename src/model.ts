@@ -70,6 +70,8 @@ export class Studio {
   dirty = false;
   private spawnAcc: Record<string, number> = {};
   private stream: Overlay['stream'] = null;
+  /** where the falling stream lands: it trails the hand a little */
+  private land: { x: number; y: number } | null = null;
   private swirl: Forces['swirl'] = [0, 0, 0, 0];
 
   constructor(readonly sim: Sim) {}
@@ -80,6 +82,7 @@ export class Studio {
     this.push = null;
     this.torch = null;
     this.dirty = false;
+    this.land = null;
     this.sim.reset();
   }
 
@@ -153,13 +156,17 @@ export class Studio {
   }
 
   /** spawn `rate` cells per second in an annulus (r0..r1) around (x, y) */
-  private spawnCells(key: string, dt: number, rate: number, x: number, y: number, r0: number, r1: number, life: [number, number], size = 1) {
+  /** cells around (x, y); with `from`, around a random point between `from` and (x, y) */
+  private spawnCells(key: string, dt: number, rate: number, x: number, y: number, r0: number, r1: number, life: [number, number], size = 1, from?: { x: number; y: number }) {
     this.spawnAcc[key] = (this.spawnAcc[key] || 0) + rate * dt;
     while (this.spawnAcc[key] >= 1) {
       this.spawnAcc[key] -= 1;
+      const t = from ? Math.random() : 1;
+      const cx = from ? from.x + (x - from.x) * t : x,
+        cy = from ? from.y + (y - from.y) * t : y;
       const a = Math.random() * Math.PI * 2;
       const r = Math.sqrt(r0 * r0 + Math.random() * (r1 * r1 - r0 * r0));
-      this.sim.addCell(x + Math.cos(a) * r, y + Math.sin(a) * r, life[0] + Math.random() * life[1], size);
+      this.sim.addCell(cx + Math.cos(a) * r, cy + Math.sin(a) * r, life[0] + Math.random() * life[1], size);
     }
   }
 
@@ -193,6 +200,7 @@ export class Studio {
 
     // pouring: into the cup, or straight onto the canvas
     const pour = this.pour;
+    if (!pour) this.land = null;
     if (pour) {
       const cup = this.cup;
       if (cup && this.hitsCup(pour.x, pour.y, 1.15)) {
@@ -205,20 +213,29 @@ export class Studio {
           ox *= lim / l;
           oy *= lim / l;
         }
+        this.land = null;
         this.pourIntoCup(pour.m, M.pourRate * dt, ox, oy);
         this.stream = { x: cup.x + ox, y: cup.y + oy, col: MATS[pour.m].rgb };
       } else {
         const white = pour.m === 0;
+        // the stream has some inertia: it follows the hand with a short lag
+        // and lays down a continuous line between frames
+        const prev = this.land ?? { x: pour.x, y: pour.y };
+        const f = 1 - Math.exp(-dt * 22);
+        const land = { x: prev.x + (pour.x - prev.x) * f, y: prev.y + (pour.y - prev.y) * f };
+        this.land = land;
         src[si++] = {
-          x: pour.x,
-          y: pour.y,
+          x: land.x,
+          y: land.y,
+          x0: prev.x,
+          y0: prev.y,
           r: white ? M.whiteR : M.colorR,
           rate: white ? M.whiteRate : M.pourRate,
           streak: 0,
           ...splitComp(oneHot(pour.m), white ? 0 : 0.55),
         };
-        if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * 0.55, pour.x, pour.y, 0, M.colorR, [1.5, 3]);
-        this.stream = { x: pour.x, y: pour.y, col: MATS[pour.m].rgb };
+        if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * 0.55, land.x, land.y, 0, M.colorR, [1.5, 3], 1, prev);
+        this.stream = { x: land.x, y: land.y, col: MATS[pour.m].rgb };
         this.dirty = true;
       }
     }

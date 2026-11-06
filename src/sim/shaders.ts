@@ -10,6 +10,19 @@ precision highp sampler2D;
 in vec2 vUv;
 float disc(vec2 p, vec2 c, float r) { return 1.0 - smoothstep(0.7 * r, r, length(p - c)); }
 const float DISC_AREA = 3.14159265 * 0.7225;
+// a disc moved evenly from a to b during the step: a moving pour stream lays
+// down a line, not dots. Samples sit at the middles of equal parts, so the
+// segments of two steps join without a double dose. Integrates to 1.
+float swept(vec2 p, vec2 a, vec2 b, float r) {
+  // samples at most r/4 apart (up to 24), so fast strokes keep smooth edges
+  int n = int(clamp(ceil(4.0 * length(b - a) / r), 1.0, 24.0));
+  float s = 0.0;
+  for (int k = 0; k < 24; k++) {
+    if (k >= n) break;
+    s += disc(p, mix(a, b, (float(k) + 0.5) / float(n)), r);
+  }
+  return s / (float(n) * DISC_AREA * r * r);
+}
 `;
 
 const FORCES = `
@@ -41,6 +54,7 @@ export const NUM_SRC = 3;
 export const FLUX_FS = COMMON + FORCES + H_AT + `
 uniform float uDt, uDx, uA, uK, uTau, uCap;
 uniform vec4 uSrc[${NUM_SRC}];      // x, y, radius, volume rate
+uniform vec2 uSrcA[${NUM_SRC}];     // start of the swept segment (= x, y when still)
 out vec4 o;
 
 // flux from cell a to cell b across their shared face.
@@ -74,7 +88,7 @@ void main() {
   float s = 0.0;
   for (int i = 0; i < ${NUM_SRC}; i++) {
     float r = uSrc[i].z;
-    if (r > 0.0) s += uSrc[i].w * disc(p, uSrc[i].xy, r) / (DISC_AREA * r * r);
+    if (r > 0.0) s += uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r);
   }
   h += -uDt / uDx * (qr - ql + qu - qd) + uDt * s;
   if (isnan(h) || isinf(h)) h = 0.0;
@@ -161,6 +175,7 @@ uniform sampler2D uS, uU, uG, uV, uMask;
 uniform vec2 uSize, uDom;
 uniform float uDt, uSurfK, uSubK, uRise, uSharpen, uTime;
 uniform vec4 uSrc[${NUM_SRC}];
+uniform vec2 uSrcA[${NUM_SRC}];
 uniform vec4 uSrcS[${NUM_SRC}];
 uniform vec4 uSrcU[${NUM_SRC}];
 uniform vec2 uSrcG[${NUM_SRC}];
@@ -214,12 +229,19 @@ void main() {
   vec4 U = sharpen(uU, xu, cr(uU, xu));
   vec4 G = vec4(cr(uG, xs).x, cr(uG, xu).y, 0.0, 0.0);
 
-  // new paint from sources (mass-weighted mixing)
+  // new paint from sources (mass-weighted mixing). The thickness in uV already
+  // holds this step's new paint: take it out, so fresh paint on a bare spot
+  // shows its full colour.
   float h = texture(uV, x).z;
   for (int i = 0; i < ${NUM_SRC}; i++) {
     float r = uSrc[i].z;
+    if (r > 0.0) h -= uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r) * uDt;
+  }
+  h = max(h, 0.0);
+  for (int i = 0; i < ${NUM_SRC}; i++) {
+    float r = uSrc[i].z;
     if (r <= 0.0) continue;
-    float dh = uSrc[i].w * disc(p, uSrc[i].xy, r) / (DISC_AREA * r * r) * uDt;
+    float dh = uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r) * uDt;
     float fr = dh / (h + dh + 1e-4);
     // plug flow (a lifted cup): the new paint fills the core and pushes the
     // older paint outwards, so consecutive colours form rings
