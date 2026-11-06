@@ -25,7 +25,7 @@ URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels p
   into it, drag from the cup to move it.
 - **Swipe** pushes wet paint. **Torch** makes cells pop up under the finger.
 - Sound effects are synthesised with Web Audio (`src/sound.ts`): torch,
-  pouring and lifting the cup. The menu turns them off.
+  pouring, swiping and lifting the cup. The menu turns them off.
 - The palette button (left of the paints) picks a colour palette. Paint on the
   canvas takes the new colours too. Palettes live in `src/sim/materials.ts`;
   each paint can be `matte`, `pearl` or `metal`.

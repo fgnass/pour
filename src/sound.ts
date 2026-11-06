@@ -1,7 +1,8 @@
 // Synthesised sound effects (Web Audio, no samples).
 // - torch: a gas burner. Quiet while the Torch tool is on, a full roar while
 //   the flame points at the canvas.
-// - pour: slow, viscous glugs (no stream noise: the paint is thick).
+// - pour: a cloud of viscous bubbles (bubble model after van den Doel).
+// - swipe: a wet squelch that follows the finger speed.
 // - lift: a slurp when the cup comes off.
 
 export type SoundState = {
@@ -9,6 +10,8 @@ export type SoundState = {
   torchOn: boolean;
   pouring: boolean;
   intoCup: boolean;
+  /** speed of the swiping finger (domain units / s), 0 when not swiping */
+  swipe: number;
 };
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -28,6 +31,7 @@ export class Sound {
   private torchWasOn = false;
   // pour
   private nextGlug = 0;
+  private nextSquelch = 0;
 
   /** Call from a user gesture: browsers only start audio after one. */
   unlock() {
@@ -63,7 +67,7 @@ export class Sound {
     comp.threshold.value = -14;
     comp.ratio.value = 4;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.9;
+    this.master.gain.value = 0.6;
     this.master.connect(comp).connect(ctx.destination);
 
     // 3 s of pink-ish noise, looped
@@ -100,10 +104,10 @@ export class Sound {
     this.hissGain.gain.value = 0.12;
     this.loop(1.1).connect(hissBP).connect(this.hissGain).connect(this.torchGain);
 
-    // glugs go through a soft low-pass: thick paint, not water
+    // bubbles go through a soft low-pass: thick paint, not water
     const glugLP = ctx.createBiquadFilter();
     glugLP.type = 'lowpass';
-    glugLP.frequency.value = 900;
+    glugLP.frequency.value = 2200;
     this.glugBus = ctx.createGain();
     this.glugBus.gain.value = 0.9;
     this.glugBus.connect(glugLP).connect(this.master);
@@ -117,30 +121,48 @@ export class Sound {
     return s;
   }
 
-  /** One bubble: a sine whose pitch rises while it decays. */
-  private glug(t: number, f: number, dur: number, gain: number) {
+  /**
+   * One bubble (van den Doel): a sine at the bubble's resonance f, damped with
+   * the rate d of a real bubble, and its pitch rises while it decays. Thick
+   * paint damps more (visc > 1).
+   */
+  private bubble(t: number, f: number, gain: number, visc = 1.6, rise = 0.35) {
     const ctx = this.ctx!;
+    const d = (0.13 * f + 0.0072 * f ** 1.5) * visc;
+    const dur = 5 / d;
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(f, t);
+    o.frequency.linearRampToValueAtTime(f * (1 + rise * d * dur * 0.2), t + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(gain, t + 0.003);
+    g.gain.setTargetAtTime(0, t + 0.003, 1 / d);
+    o.connect(g).connect(this.glugBus);
+    o.start(t);
+    o.stop(t + dur + 0.01);
+  }
+
+  /** A short wet squelch: band-passed noise whose pitch drops, sometimes with a tiny bubble. */
+  private squelch(t: number, gain: number) {
+    const ctx = this.ctx!;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = rnd(2.5, 5);
+    const f = rnd(500, 1300);
+    const dur = rnd(0.04, 0.09);
+    bp.frequency.setValueAtTime(f, t);
+    bp.frequency.exponentialRampToValueAtTime(f * rnd(0.45, 0.7), t + dur);
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(gain, t + 0.018);
+    g.gain.exponentialRampToValueAtTime(gain, t + 0.006);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    g.connect(this.glugBus);
-    // thick paint: the bubble rises slowly in pitch, with a quiet second partial
-    const rise = rnd(1.25, 1.6);
-    for (const [k, a] of [
-      [1, 1],
-      [2.4, 0.18],
-    ]) {
-      const o = ctx.createOscillator();
-      o.type = 'sine';
-      o.frequency.setValueAtTime(f * k, t);
-      o.frequency.exponentialRampToValueAtTime(f * k * rise, t + dur);
-      const og = ctx.createGain();
-      og.gain.value = a;
-      o.connect(og).connect(g);
-      o.start(t);
-      o.stop(t + dur + 0.02);
-    }
+    s.connect(bp).connect(g).connect(this.master);
+    s.start(t, rnd(0, 2.5));
+    s.stop(t + dur + 0.01);
+    if (Math.random() < 0.35) this.bubble(t + rnd(0, dur), rnd(900, 1800), gain * 0.5, 2.5, 0.5);
   }
 
   /** Ignition: a short gas puff when the torch comes on. */
@@ -166,7 +188,8 @@ export class Sound {
   lift() {
     if (!this.ready()) return;
     const t = this.ctx!.currentTime;
-    for (let i = 0; i < 4; i++) this.glug(t + i * rnd(0.08, 0.14), rnd(90, 140) - i * 8, rnd(0.18, 0.28), 0.4);
+    // the paint lets go of the cup: a few large bubbles, then smaller ones
+    for (let i = 0; i < 9; i++) this.bubble(t + i * rnd(0.03, 0.08), rnd(220, 420) * (1 + i * 0.12), rnd(0.12, 0.25));
   }
 
   private ready() {
@@ -180,7 +203,7 @@ export class Sound {
     const t = ctx.currentTime;
 
     // torch
-    const torchLevel = s.torchOn ? 0.22 : s.torchTool ? 0.05 : 0;
+    const torchLevel = s.torchOn ? 0.08 : s.torchTool ? 0.03 : 0;
     if (s.torchTool && !this.torchWasOn) this.ignite(t);
     this.torchWasOn = s.torchTool;
     // a burner flutters: small random changes of loudness and colour
@@ -188,14 +211,22 @@ export class Sound {
     // fades in slowly, so turning it on does not startle
     this.torchGain.gain.setTargetAtTime(torchLevel * this.flutter, t, s.torchOn ? 0.08 : 0.25);
     this.roarLP.frequency.setTargetAtTime((s.torchOn ? 900 : 380) * rnd(0.85, 1.15), t, 0.05);
-    this.roarGain.gain.setTargetAtTime(s.torchOn ? 1.4 : 1, t, 0.08);
+    this.roarGain.gain.setTargetAtTime(s.torchOn ? 1.15 : 1, t, 0.08);
     this.hissGain.gain.setTargetAtTime(s.torchOn ? 0.22 : 0.1, t, 0.08);
 
-    // pour: slow, viscous glugs
+    // pour: bubbles in small clusters, like thick paint folding over itself
     if (s.pouring && t >= this.nextGlug) {
-      const base = s.intoCup ? 150 : 105;
-      this.glug(t + 0.01, rnd(base, base * 1.6), rnd(0.14, 0.26), rnd(0.3, 0.5));
-      this.nextGlug = t + rnd(0.16, 0.42);
+      const base = s.intoCup ? 380 : 300;
+      const n = 1 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < n; i++) this.bubble(t + 0.01 + i * rnd(0.012, 0.04), rnd(base, base * 2.2), rnd(0.08, 0.22));
+      this.nextGlug = t + rnd(0.05, 0.16);
+    }
+
+    // swipe: squelches, more and louder the faster the finger moves
+    const k = Math.min(1, s.swipe / 0.8);
+    if (k > 0.05 && t >= this.nextSquelch) {
+      this.squelch(t + 0.005, 0.05 + 0.12 * k);
+      this.nextSquelch = t + rnd(0.03, 0.09) / k;
     }
   }
 }

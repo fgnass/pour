@@ -629,6 +629,8 @@ function frame(now: number) {
     torchOn: !!studio.torch,
     pouring: !!pour,
     intoCup: !!pour && studio.hitsCup(pour.x, pour.y, 1.15),
+    // only while the finger really moves (the velocity stays when it rests)
+    swipe: studio.push && drag && now - drag.t < 80 ? Math.hypot(studio.push.vx, studio.push.vy) : 0,
   });
   const lifting = !!studio.cup?.lifting;
   if (lifting && !wasLifting) sound.lift();
