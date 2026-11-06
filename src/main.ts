@@ -1,5 +1,6 @@
 import './style.css';
 import { Demo } from './demo';
+import { mountIcons } from './icons';
 import { Studio } from './model';
 import { GL } from './sim/gl';
 import { MATS } from './sim/materials';
@@ -7,6 +8,8 @@ import { P, Sim, type Quality } from './sim/sim';
 import { TiltInput } from './tilt';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
+
+mountIcons();
 
 const canvas = $<HTMLCanvasElement>('#gl');
 const hintEl = $('#hint');

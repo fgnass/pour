@@ -11,6 +11,7 @@
     "icons": "pwa-assets-generator"
   },
   "devDependencies": {
+    "@material-symbols/svg-400": "^0.48.3",
     "@types/node": "^26.6.6",
     "@vite-pwa/assets-generator": "^2.0.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
