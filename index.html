@@ -9,6 +9,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Pour" />
     <meta name="description" content="Acrylic open cup pour simulator. Tilt your phone to make the paint flow." />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" sizes="any" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-180x180.png" />
     <title>Pour</title>
   </head>
   <body>
@@ -63,6 +66,10 @@
         <button data-act="save">Save image</button>
         <button data-act="sound">Sound: on</button>
         <button data-act="help">How it works</button>
+        <button data-act="install" hidden>Install app</button>
+        <div class="sheet-sep"></div>
+        <a href="https://github.com/fgnass/pour" target="_blank" rel="noopener">Source on GitHub</a>
+        <a href="https://gnass.buzz/privacy" target="_blank" rel="noopener">Privacy</a>
       </div>
     </div>
 
@@ -72,21 +79,19 @@
 
     <div id="start" class="start">
       <div class="start-panel">
-        <h1>Pour</h1>
-        <p class="lead">An acrylic open cup pour, on your phone.</p>
-        <ol>
-          <li>Pour a puddle of <b>white</b>.</li>
-          <li>Set the <b>cup</b> into it.</li>
-          <li>Pour <b>colours</b> into the cup. They sink under the white.</li>
-          <li>Drag the cup off in a spiral, then <b>lift</b> it.</li>
-          <li>Move the <b>torch</b> over the paint to make cells.</li>
-          <li><b>Tilt</b> your phone until the paint covers the canvas.</li>
-        </ol>
-        <p class="note">Tilt only acts while the Tilt tool is on. The pose at the moment you turn it on counts as flat.</p>
+        <h1 class="logo"><img src="/logo.svg" alt="Pour" width="959" height="1117" /></h1>
+        <p class="lead">Pour simulates acrylic pouring, a fluid art technique where layers of paint flow into cells and swirls. Fill a cup with colours, release it on the canvas and tilt your phone to let the paint spread.</p>
         <div class="start-actions">
           <button id="startBtn" class="primary">Start</button>
           <button id="demoBtn">Watch demo</button>
         </div>
+        <button id="installBtn" class="install" hidden>Install app</button>
+        <p id="installHelp" class="note" hidden></p>
+        <p class="start-links">
+          <a href="https://github.com/fgnass/pour" target="_blank" rel="noopener">GitHub</a>
+          <span aria-hidden="true">·</span>
+          <a href="https://gnass.buzz/privacy" target="_blank" rel="noopener">Privacy</a>
+        </p>
       </div>
     </div>
 

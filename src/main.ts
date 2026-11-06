@@ -1,5 +1,6 @@
 import './style.css';
 import { Demo } from './demo';
+import { initInstall } from './install';
 import { mountIcons } from './icons';
 import { Studio } from './model';
 import { GL } from './sim/gl';
@@ -17,6 +18,7 @@ const hintEl = $('#hint');
 const paintsEl = $('#paints');
 const cupBtn = $<HTMLButtonElement>('#tools [data-tool="cup"]');
 const paletteSheet = $('#palettes');
+const paintsBar = $('.dock .paints');
 const sheet = $('#sheet');
 const startEl = $('#start');
 
@@ -274,6 +276,9 @@ function setTool(t: Tool, announce = true) {
   if (t === 'tilt' && tool !== 'tilt') startTilt();
   tool = t;
   document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tool === t)));
+  // paints only matter while pouring or filling the cup
+  paintsBar.classList.toggle('off', t !== 'pour' && t !== 'cup');
+  if (t !== 'pour' && t !== 'cup') paletteSheet.hidden = true;
   if (announce) hint(toolHint());
 }
 document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
@@ -449,6 +454,16 @@ function lift() {
   navigator.vibrate?.([8, 40, 8]);
 }
 
+// install
+const installHelp = $('#installHelp');
+const install = initInstall([$('#installBtn'), $('[data-act="install"]')], text => {
+  installHelp.textContent = text;
+  installHelp.hidden = false;
+  startEl.hidden = false;
+  startEl.classList.remove('gone');
+});
+$('#installBtn').addEventListener('click', install);
+
 // menu
 $('#menuBtn').addEventListener('click', () => (sheet.hidden = false));
 sheet.addEventListener('click', e => {
@@ -475,6 +490,7 @@ sheet.addEventListener('click', e => {
       /* no storage */
     }
   }
+  else if (act === 'install') install();
   else if (act === 'help') {
     startEl.hidden = false;
     startEl.classList.remove('gone');

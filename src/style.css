@@ -162,6 +162,15 @@ svg {
   background: var(--glass);
   border: 1px solid var(--line);
 }
+.paints {
+  transition: opacity 0.2s, transform 0.2s, visibility 0.2s;
+}
+#hud .paints.off {
+  opacity: 0;
+  transform: translateY(10px);
+  visibility: hidden;
+  pointer-events: none;
+}
 #paints {
   display: flex;
   gap: 6px;
@@ -263,8 +272,26 @@ svg {
   padding: 13px 14px;
   border-radius: 12px;
 }
-.sheet-panel button:active {
+.sheet-panel button,
+.sheet-panel a {
+  color: inherit;
+  text-decoration: none;
+}
+.sheet-panel a {
+  padding: 13px 14px;
+  border-radius: 12px;
+}
+.sheet-panel button:active,
+.sheet-panel a:active {
   background: var(--glass-hi);
+}
+.sheet-panel button[hidden] {
+  display: none;
+}
+.sheet-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--line);
 }
 
 /* palette chooser: a panel above the dock */
@@ -320,11 +347,17 @@ svg {
   display: none;
 }
 .start-panel {
+  /* light dialog on the dark app */
+  --text: #18191c;
+  --muted: #64625d;
+  --line: rgba(0, 0, 0, 0.14);
+  color-scheme: light;
   width: min(100%, 380px);
   padding: 26px 22px 22px;
   border-radius: 26px;
-  background: rgba(24, 25, 28, 0.9);
-  border: 1px solid var(--line);
+  color: var(--text);
+  background: #f6f5f1;
+  border: 1px solid rgba(255, 255, 255, 0.5);
   box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
 }
 .start h1 {
@@ -337,15 +370,19 @@ svg {
   background-clip: text;
   color: transparent;
 }
+.start h1.logo {
+  margin: -6px 0 10px;
+  background: none;
+  text-align: center;
+  line-height: 0;
+}
+.start h1.logo img {
+  width: 150px;
+  height: auto;
+}
 .lead {
   margin: 4px 0 16px;
   color: var(--muted);
-}
-.start ol {
-  margin: 0;
-  padding-left: 1.3em;
-  display: grid;
-  gap: 6px;
 }
 .note {
   margin: 16px 0 0;
@@ -364,9 +401,33 @@ svg {
   border: 1px solid var(--line);
   font-weight: 600;
 }
+.start .install {
+  width: 100%;
+  margin-top: 10px;
+  min-height: 46px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  font-weight: 600;
+}
+.start .install[hidden] {
+  display: none;
+}
+.start-links {
+  margin: 16px 0 0;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.start-links a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .start-actions .primary {
-  background: var(--sel);
-  color: #141414;
+  background: #18191c;
+  color: #f6f5f1;
   border-color: transparent;
 }
 
