@@ -48,6 +48,9 @@ const PW = 256;
 const PCOUNT = PW * PW;
 const MAX_SUB = 60;
 
+/** Fastest imposed velocity (cup wall, swipe, twist); the model clamps to this. */
+export const MAX_IMPOSED = 1.5;
+
 export class Sim {
   readonly g: GL;
   readonly dom: [number, number];
@@ -100,7 +103,8 @@ export class Sim {
       return f;
     };
 
-    const PIG = g.floatLinear ? gl.RGBA32F : gl.RGBA16F;
+    // half floats: enough for concentrations in [0, 1], half the bandwidth
+    const PIG = gl.RGBA16F;
     this.H = [0, 1].map(() => tex(this.NX, this.NY, gl.R32F, false));
     this.Hfb = this.H.map(t => fbo([t]));
     this.V = tex(this.NX, this.NY, gl.RGBA16F, true);
@@ -144,11 +148,23 @@ export class Sim {
     this.time = 0;
   }
 
-  /** Largest time step that the explicit thickness solver can take. */
-  stableDt() {
+  /**
+   * Largest time step that the explicit thickness solver can take. Without
+   * forces it is the worst case; with forces it uses the actual tilt and
+   * imposed velocities, which needs far fewer substeps most of the time.
+   */
+  stableDt(f?: Forces) {
     const dx = this.dx;
     const dtDiff = (0.22 * dx * dx) / (P.A * P.K * P.hCap ** 3);
-    const dtAdv = (0.45 * dx) / (3 * P.A * P.hCap ** 2 * P.tiltMax + 1.5);
+    let tilt = P.tiltMax,
+      vImp = MAX_IMPOSED;
+    if (f) {
+      tilt = Math.hypot(...f.tilt);
+      vImp = 0;
+      f.push.forEach((p, i) => (vImp = Math.max(vImp, Math.hypot(...f.pushVel[i]) * p[3])));
+      vImp = Math.max(vImp, Math.abs(f.swirl[3]) * f.swirl[2]);
+    }
+    const dtAdv = (0.45 * dx) / (3 * P.A * P.hCap ** 2 * tilt + vImp + 0.05);
     return Math.min(dtDiff, dtAdv);
   }
   maxDt() {
@@ -206,7 +222,7 @@ export class Sim {
     const g = this.g;
     const gl = g.gl;
     if (f.src.length !== NUM_SRC) throw new Error('bad source count');
-    const n = Math.max(1, Math.ceil(dt / this.stableDt() - 1e-6));
+    const n = Math.max(1, Math.ceil(dt / this.stableDt(f) - 1e-6));
     this.substeps = n;
     const sdt = dt / n;
 

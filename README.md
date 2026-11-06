@@ -12,7 +12,7 @@ npm run dev:https   # self-signed HTTPS on the LAN: device motion needs a secure
 npm run build       # static site in dist/
 ```
 
-URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels per short side.
+URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels per short side, `?fps=60` frame rate (default 30).
 
 ## How it works
 

@@ -2,7 +2,7 @@
 // into forces for the simulation. No DOM here.
 import { MATS, mixColor, oneHot, splitComp, type Comp } from './sim/materials';
 import { NUM_SRC } from './sim/shaders';
-import { noSource, P, type Forces, type Overlay, type Sim, type Source } from './sim/sim';
+import { MAX_IMPOSED, noSource, P, type Forces, type Overlay, type Sim, type Source } from './sim/sim';
 
 export const M = {
   cupR: 0.07,
@@ -13,6 +13,11 @@ export const M = {
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
   torchCells: 2500,
+};
+
+const clampVel = (vx: number, vy: number): [number, number] => {
+  const m = Math.hypot(vx, vy);
+  return m > MAX_IMPOSED ? [(vx * MAX_IMPOSED) / m, (vy * MAX_IMPOSED) / m] : [vx, vy];
 };
 
 type Layer = { m: number; c: Comp; v: number };
@@ -234,7 +239,7 @@ export class Studio {
       }
       // the cup wall drags paint along
       push[0] = [cup.x, cup.y, cup.R * 1.35, 0.9];
-      pushVel[0] = [cup.vx, cup.vy];
+      pushVel[0] = clampVel(cup.vx, cup.vy);
       if (cup.lifting) {
         cup.liftT += dt;
         cup.alpha = Math.max(0, 1 - cup.liftT / 0.5);
@@ -251,7 +256,7 @@ export class Studio {
     if (this.push) {
       const p = this.push;
       push[1] = [p.x, p.y, p.r, 1.0];
-      pushVel[1] = [p.vx, p.vy];
+      pushVel[1] = clampVel(p.vx, p.vy);
     }
 
     return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, riseK: this.torch ? 2.5 : 1 };

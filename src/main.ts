@@ -91,7 +91,7 @@ function resize() {
   }
   Object.assign(layout, { w, h, left: (W - w) / 2, top: (H - h) / 2 });
   Object.assign(canvas.style, { width: w + 'px', height: h + 'px', left: layout.left + 'px', top: layout.top + 'px' });
-  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const dpr = Math.min(devicePixelRatio || 1, 1.5);
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
   wake();
@@ -468,8 +468,13 @@ const DEAD = 0.03; // ~2° of hand jitter does nothing
 const GAIN = 1.7; // full tilt at about 19°
 let last = performance.now();
 
+// 30 fps is enough for flowing paint and halves the GPU load
+const FRAME_MS = 1000 / (+(qs.get('fps') ?? 0) || 30);
+
 function frame(now: number) {
-  const rdt = Math.min((now - last) / 1000, 1 / 30);
+  requestAnimationFrame(frame);
+  if (now - last < FRAME_MS - 2) return;
+  const rdt = Math.min((now - last) / 1000, 1 / 20);
   last = now;
   // never exceed the stable step: slow the simulation down instead
   const dt = Math.max(1e-4, Math.min(rdt, sim.maxDt()));
@@ -532,7 +537,7 @@ function frame(now: number) {
   }
 
   syncCupBtn();
-  requestAnimationFrame(frame);
+
 }
 
 setTool('pour', false);
