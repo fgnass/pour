@@ -76,7 +76,8 @@ export class Demo {
       [4, 1.1],
       [5, 1.1],
     ]) {
-      s.pour = { m, x, y };
+      // not always the exact middle: the rings in the cup come out uneven
+      s.pour = { m, x: x + (Math.random() - 0.5) * 0.05, y: y + (Math.random() - 0.5) * 0.05 };
       await this.wait(d);
       s.pour = null;
       await this.wait(0.25);

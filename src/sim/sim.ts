@@ -39,7 +39,15 @@ export type Forces = {
 
 export type Overlay = {
   view: [number, number];
-  cup: { x: number; y: number; R: number; alpha: number; col: number[]; fill: number } | null;
+  cup: {
+    x: number;
+    y: number;
+    R: number;
+    alpha: number;
+    /** colour rings in the cup, oldest first */
+    rings: { x: number; y: number; r: number; seed: number; col: number[] }[];
+    fill: number;
+  } | null;
   stream: { x: number; y: number; col: number[] } | null;
   torch: { x: number; y: number; r: number } | null;
 };
@@ -52,6 +60,7 @@ const MAX_SUB = 60;
 
 /** Fastest imposed velocity (cup wall, swipe, twist); the model clamps to this. */
 export const MAX_IMPOSED = 1.5;
+export const MAX_RINGS = 10;
 
 export class Sim {
   readonly g: GL;
@@ -325,7 +334,18 @@ export class Sim {
     if (o.cup) {
       const c = o.cup;
       gl.uniform4f(p.uni.uCup, c.x, c.y, c.R, c.alpha);
-      gl.uniform4f(p.uni.uCupCol, c.col[0], c.col[1], c.col[2], c.fill);
+      gl.uniform1f(p.uni.uCupFill, c.fill);
+      const n = Math.min(c.rings.length, MAX_RINGS);
+      const rs = c.rings.slice(c.rings.length - n);
+      const ring = new Float32Array(MAX_RINGS * 4),
+        rcol = new Float32Array(MAX_RINGS * 3);
+      rs.forEach((r, i) => {
+        ring.set([r.x, r.y, r.r, r.seed], i * 4);
+        rcol.set(r.col, i * 3);
+      });
+      gl.uniform4fv(p.uni.uRing, ring);
+      gl.uniform3fv(p.uni.uRingCol, rcol);
+      gl.uniform1i(p.uni.uRingN, n);
     } else gl.uniform4f(p.uni.uCup, 0, 0, 0, 0);
     if (o.stream) {
       gl.uniform4f(p.uni.uStream, o.stream.x, o.stream.y, 0.0055, 1);

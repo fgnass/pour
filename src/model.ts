@@ -1,6 +1,6 @@
 // Studio state: the cup, paint sources and cells. Turns the user's actions
 // into forces for the simulation. No DOM here.
-import { MATS, mixColor, oneHot, splitComp, type Comp } from './sim/materials';
+import { MATS, oneHot, splitComp, type Comp } from './sim/materials';
 import { NUM_SRC } from './sim/shaders';
 import { MAX_IMPOSED, noSource, P, type Forces, type Overlay, type Sim, type Source } from './sim/sim';
 
@@ -15,12 +15,13 @@ export const M = {
   torchR: 0.09, // radius of the torch flame
   torchCells: 900, // cells per second under the flame
   torchHeat: 6, // how much faster paint rises under the flame
-  // The cup wall holds the paint back: at rest only a little seeps out under
-  // the rim. Moving the cup lets paint escape; lifting releases the rest.
-  leakRest: 0.08, // fraction of the contents per second
-  leakMove: 6, // extra fraction per second per unit of cup speed
-  leakPour: 0.1, // extra while paint lands in the cup
+  // The cup wall holds the paint back: the paint collects in the cup and only
+  // a little seeps out under the rim. Moving the cup lets some escape; lifting
+  // releases the rest.
+  leakRest: 0.012, // fraction of the contents per second
+  leakMove: 2.5, // extra fraction per second per unit of cup speed
   leakLift: 3.5,
+  maxRings: 10, // colour rings shown in the cup
 };
 
 const clampVel = (vx: number, vy: number): [number, number] => {
@@ -29,6 +30,8 @@ const clampVel = (vx: number, vy: number): [number, number] => {
 };
 
 type Layer = { m: number; c: Comp; v: number };
+/** What you see from above: each pour pushes the older paint outwards. */
+export type Ring = { col: [number, number, number]; v: number; ox: number; oy: number; seed: number };
 
 export type Cup = {
   x: number;
@@ -39,6 +42,8 @@ export type Cup = {
   vy: number;
   R: number;
   layers: Layer[];
+  /** oldest first */
+  rings: Ring[];
   lifting: boolean;
   liftT: number;
   alpha: number;
@@ -74,7 +79,7 @@ export class Studio {
   }
 
   placeCup(x: number, y: number) {
-    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, layers: [], lifting: false, liftT: 0, alpha: 1 };
+    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, layers: [], rings: [], lifting: false, liftT: 0, alpha: 1 };
     return this.cup;
   }
 
@@ -95,7 +100,8 @@ export class Studio {
     return c ? c.layers.reduce((a, l) => a + l.v, 0) : 0;
   }
 
-  private pourIntoCup(m: number, v: number) {
+  private pourIntoCup(m: number, v: number, ox: number, oy: number) {
+    this.addRing(m, v, ox, oy);
     const L = this.cup!.layers;
     let idx = L.length;
     // colours poured from high sink below the white (index 0 = bottom)
@@ -105,8 +111,31 @@ export class Studio {
     else L.splice(idx, 0, { m, c: oneHot(m), v });
   }
 
+  /** The newest ring grows while the same colour lands at the same spot. */
+  private addRing(m: number, v: number, ox: number, oy: number) {
+    const R = this.cup!.rings;
+    const top = R[R.length - 1];
+    const col = MATS[m].rgb;
+    if (top && top.col === col && Math.hypot(top.ox - ox, top.oy - oy) < M.cupR * 0.3) {
+      top.ox += ((ox - top.ox) * v) / (top.v + v);
+      top.oy += ((oy - top.oy) * v) / (top.v + v);
+      top.v += v;
+      return;
+    }
+    R.push({ col, v, ox, oy, seed: Math.random() * 6.283 });
+    if (R.length > M.maxRings) {
+      // the two oldest rings blend into one
+      const [a, b] = R.splice(0, 2);
+      const w = a.v + b.v;
+      R.unshift({ col: a.col.map((x, i) => (x * a.v + b.col[i] * b.v) / w) as Ring['col'], v: w, ox: 0, oy: 0, seed: a.seed });
+    }
+  }
+
   private drainCup(q: number) {
     const cup = this.cup!;
+    // the rings shrink with the contents
+    const k = Math.max(0, 1 - q / (this.cupVolume() || 1));
+    for (const r of cup.rings) r.v *= k;
     const out = new Float64Array(MATS.length);
     if (q <= 0) return out;
     const V = this.cupVolume();
@@ -130,23 +159,6 @@ export class Studio {
     const s = out.reduce((a, b) => a + b, 0) || 1;
     for (let k = 0; k < out.length; k++) out[k] /= s;
     return out;
-  }
-
-  private cupColor() {
-    const cup = this.cup!;
-    const c = new Float64Array(MATS.length);
-    let depth = 0,
-      wsum = 0;
-    for (let i = cup.layers.length - 1; i >= 0; i--) {
-      const l = cup.layers[i];
-      const w = Math.exp(-depth / 0.015) * l.v;
-      for (let k = 0; k < c.length; k++) c[k] += l.c[k] * w;
-      wsum += w;
-      depth += l.v;
-    }
-    if (wsum > 0) for (let k = 0; k < c.length; k++) c[k] /= wsum;
-    else c[0] = 1;
-    return mixColor(c);
   }
 
   /** spawn `rate` cells per second in an annulus (r0..r1) around (x, y) */
@@ -193,8 +205,17 @@ export class Studio {
     if (pour) {
       const cup = this.cup;
       if (cup && this.hitsCup(pour.x, pour.y, 1.15)) {
-        this.pourIntoCup(pour.m, M.pourRate * dt);
-        this.stream = { x: cup.x + 0.006, y: cup.y - 0.004, col: MATS[pour.m].rgb };
+        // where the stream lands in the cup (kept inside the cup)
+        let ox = pour.x - cup.x,
+          oy = pour.y - cup.y;
+        const l = Math.hypot(ox, oy),
+          lim = cup.R * 0.6;
+        if (l > lim) {
+          ox *= lim / l;
+          oy *= lim / l;
+        }
+        this.pourIntoCup(pour.m, M.pourRate * dt, ox, oy);
+        this.stream = { x: cup.x + ox, y: cup.y + oy, col: MATS[pour.m].rgb };
       } else {
         const white = pour.m === 0;
         src[si++] = {
@@ -225,8 +246,7 @@ export class Studio {
       cup.vy += (vy - cup.vy) * 0.5;
       const speed = Math.hypot(cup.vx, cup.vy);
       const V = this.cupVolume();
-      const intoCup = this.stream && pour && this.hitsCup(pour.x, pour.y, 1.15);
-      let leak = M.leakRest + M.leakMove * speed + (intoCup ? M.leakPour : 0);
+      let leak = M.leakRest + M.leakMove * speed;
       if (cup.lifting) leak = M.leakLift;
       let q = V * (1 - Math.exp(-leak * dt));
       if (cup.lifting) q = Math.min(V, Math.max(q, 0.04 * dt));
@@ -275,11 +295,29 @@ export class Studio {
     return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, M.torchHeat] : [0, 0, 1, 0] };
   }
 
+  /**
+   * Discs to draw in the cup, oldest first. Each disc holds its own paint and
+   * all newer paint, so its area follows that volume. A disc sits around the
+   * spot where its paint landed but is pushed inwards as it grows.
+   */
+  private ringDiscs(c: Cup) {
+    const V = c.rings.reduce((a, r) => a + r.v, 0);
+    if (V <= 0) return [];
+    const Ri = c.R * 0.93;
+    let cum = V;
+    return c.rings.map(r => {
+      const rad = Ri * Math.sqrt(Math.max(0, cum) / V);
+      cum -= r.v;
+      const k = 1 - rad / Ri;
+      return { x: c.x + r.ox * k, y: c.y + r.oy * k, r: rad, seed: r.seed, col: r.col };
+    });
+  }
+
   overlay(view: [number, number]): Overlay {
     const c = this.cup;
     return {
       view,
-      cup: c ? { x: c.x, y: c.y, R: c.R, alpha: c.alpha, col: this.cupColor(), fill: Math.min(1, this.cupVolume() / 0.03) } : null,
+      cup: c ? { x: c.x, y: c.y, R: c.R, alpha: c.alpha, rings: this.ringDiscs(c), fill: Math.min(1, this.cupVolume() / 0.03) } : null,
       stream: this.stream,
       torch: this.torch ? { ...this.torch, r: M.torchR } : null,
     };

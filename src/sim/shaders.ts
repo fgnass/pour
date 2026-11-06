@@ -266,7 +266,10 @@ uniform vec4 uTorch;     // x, y, radius, active
 uniform vec2 uView;      // tilt of the board relative to the viewer
 uniform float uPx;       // domain units per screen pixel
 uniform vec4 uCup;       // x, y, radius, alpha
-uniform vec4 uCupCol;    // rgb, fill
+uniform float uCupFill;
+uniform vec4 uRing[10];  // colour rings in the cup: x, y, radius, seed (oldest first)
+uniform vec3 uRingCol[10];
+uniform int uRingN;
 uniform vec4 uStream;    // x, y, radius, active
 uniform vec3 uStreamCol;
 out vec4 o;
@@ -373,8 +376,20 @@ void main() {
     float sh = 1.0 - smoothstep(R * 0.95, R * 1.35, length(d2 - vec2(0.012, -0.018)));
     col *= 1.0 - 0.25 * sh * step(R, d) * uCup.w;
     float inside = 1.0 - smoothstep(R * 0.93, R * 0.95, d);
-    vec3 contents = toLin(uCupCol.rgb) * (0.85 + 0.15 * (1.0 - d / R));
-    col = mix(col, contents, inside * uCupCol.a * 0.9 * uCup.w);
+    // contents: newer paint pushes the older paint outwards into rings
+    vec3 contents = toLin(uRingN > 0 ? uRingCol[0] : vec3(0.93));
+    for (int i = 1; i < 10; i++) {
+      if (i >= uRingN) break;
+      vec2 q = p - uRing[i].xy;
+      float a = atan(q.y, q.x), sd = uRing[i].w;
+      float rr = uRing[i].z * (1.0 + 0.07 * sin(3.0 * a + sd) + 0.04 * sin(5.0 * a + 2.3 * sd));
+      float e = length(q) - rr;
+      float m = 1.0 - smoothstep(-uPx, uPx, e);
+      contents = mix(contents, toLin(uRingCol[i]), m);
+      contents *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, uPx * 2.5, abs(e)));
+    }
+    contents *= 0.85 + 0.15 * (1.0 - d / R);
+    col = mix(col, contents, inside * uCupFill * 0.9 * uCup.w);
     col = mix(col, col * 0.92 + 0.06, inside * uCup.w * 0.6);
     float px = uPx;
     float rim = 1.0 - smoothstep(px * 0.6, px * 2.2, abs(d - R));

@@ -218,7 +218,7 @@ $('#paletteBtn').addEventListener('click', () => {
 paletteSheet.addEventListener('click', () => (paletteSheet.hidden = true));
 
 // ---------------------------------------------------------------- tools
-type Tool = 'pour' | 'cup' | 'swipe' | 'torch' | 'tilt';
+type Tool = 'pour' | 'cup' | 'swipe' | 'torch' | 'tilt' | 'none';
 let tool: Tool = 'pour';
 function toolHint() {
   switch (tool) {
@@ -233,6 +233,8 @@ function toolHint() {
       return 'Drag through wet paint to push it';
     case 'torch':
       return 'Move the flame over the paint to make cells';
+    case 'none':
+      return 'Torch off';
     case 'tilt':
       if (tilt.mode === 'sensor') return 'Tilt your phone · tap the canvas to level again';
       if (tilt.mode === 'pending') return 'Tilt your phone …';
@@ -249,6 +251,8 @@ document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
   b.addEventListener('click', () => {
     // with a cup on the canvas, the cup button lifts it
     if (b === cupBtn && cupOnCanvas) lift();
+    // a second tap turns the torch off: then no tool is on
+    else if (b.dataset.tool === 'torch' && tool === 'torch') setTool('none');
     else setTool(b.dataset.tool as Tool);
   }),
 );
@@ -288,6 +292,16 @@ type Drag = {
 let drag: Drag | null = null;
 const manualTilt = { x: 0, y: 0 };
 
+/** a point on the cup, kept inside its rim (the touch area is a bit larger) */
+function inCup(p: { x: number; y: number }) {
+  const c = studio.cup!;
+  const dx = p.x - c.x,
+    dy = p.y - c.y,
+    l = Math.hypot(dx, dy),
+    k = l > c.R * 0.9 ? (c.R * 0.9) / l : 1;
+  return { x: c.x + dx * k, y: c.y + dy * k };
+}
+
 canvas.addEventListener('pointerdown', e => {
   wake();
   if (drag) return;
@@ -305,7 +319,7 @@ canvas.addEventListener('pointerdown', e => {
     drag.cx = cup.tx;
     drag.cy = cup.ty;
     if (tool === 'pour') {
-      studio.pour = { m: paint, x: cup.x, y: cup.y };
+      studio.pour = { m: paint, ...inCup(p) };
       markPouring(true);
     }
   } else if (tool === 'pour') {
@@ -348,8 +362,8 @@ canvas.addEventListener('pointermove', e => {
       cup.tx = Math.min(W, Math.max(0, drag.cx + p.x - drag.sx));
       cup.ty = Math.min(H, Math.max(0, drag.cy + p.y - drag.sy));
     } else if (studio.pour) {
-      studio.pour.x = cup.x;
-      studio.pour.y = cup.y;
+      // pour where the finger is (the model keeps it inside the cup)
+      Object.assign(studio.pour, inCup(p));
     }
   } else if (tool === 'pour' && studio.pour) {
     studio.pour.x = p.x;
