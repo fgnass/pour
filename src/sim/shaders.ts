@@ -124,15 +124,20 @@ uniform vec3 uCol[6];
 uniform vec3 uSheen[6];  // pearl shimmer colour per paint
 uniform float uPearl[6]; // 1 for pearl paints
 uniform float uMetal[6]; // 1 for metallic paints
+// (no arrays here: some mobile drivers reject array constructors)
+void fin1(float w, int i, inout float irid, inout vec3 sheen, inout float metal, inout vec3 mtint) {
+  irid += w * uPearl[i];
+  sheen += w * uPearl[i] * uSheen[i];
+  metal += w * uMetal[i];
+  mtint += w * uMetal[i] * uCol[i] / max(max(uCol[i].r, uCol[i].g), max(uCol[i].b, 0.05));
+}
 void finish(vec4 c, float gold, out float irid, out vec3 sheen, out float metal, out vec3 mtint) {
-  float W[6] = float[6](0.0, c.x, c.y, gold, c.z, c.w);
   irid = 0.0; metal = 0.0; sheen = vec3(0.0); mtint = vec3(0.0);
-  for (int i = 1; i < 6; i++) {
-    irid += W[i] * uPearl[i];
-    sheen += W[i] * uPearl[i] * uSheen[i];
-    metal += W[i] * uMetal[i];
-    mtint += W[i] * uMetal[i] * uCol[i] / max(max(uCol[i].r, uCol[i].g), max(uCol[i].b, 0.05));
-  }
+  fin1(c.x, 1, irid, sheen, metal, mtint);
+  fin1(c.y, 2, irid, sheen, metal, mtint);
+  fin1(gold, 3, irid, sheen, metal, mtint);
+  fin1(c.z, 4, irid, sheen, metal, mtint);
+  fin1(c.w, 5, irid, sheen, metal, mtint);
   sheen /= irid + 1e-4;
   mtint /= metal + 1e-4;
 }

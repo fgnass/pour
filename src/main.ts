@@ -89,7 +89,15 @@ syncSoundBtn();
 
 const viewAspect = () => innerWidth / innerHeight;
 boot('compile');
-let sim = new Sim(g, viewAspect(), quality);
+let sim: Sim;
+try {
+  sim = new Sim(g, viewAspect(), quality);
+} catch (e) {
+  // a shader this GPU does not accept: say so instead of hanging
+  boot(null);
+  showError('Your browser could not set up the paint simulation. ' + (e as Error).message.split('\n')[0]);
+  throw e;
+}
 let studio = new Studio(sim);
 let demo = new Demo(studio);
 const tilt = new TiltInput();
