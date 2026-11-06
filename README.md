@@ -16,8 +16,9 @@ URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels p
 
 ## How it works
 
-- **Tilt** comes from `deviceorientation`, relative to the pose at Start (or after "Level").
-  Without a sensor the app shows a Tilt tool and tilts the canvas on screen (arrow keys on desktop).
+- **Tilt** acts only while the Tilt tool is on. Turning it on takes the current pose as flat
+  (tap the canvas to level again). It reads `deviceorientation`; the permission is asked on first use.
+  Without a sensor, dragging tilts the canvas on screen (arrow keys on desktop).
 - **Pour**: hold a finger on the canvas to pour the selected paint. On the cup it goes into the cup;
   colours sink below the white.
 - **Cup**: tap to set it down. While it sits on the canvas, the Cup button is Lift. Hold on the cup to pour

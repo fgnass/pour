@@ -16,7 +16,6 @@ const hintEl = $('#hint');
 const paintsEl = $('#paints');
 const cupBtn = $<HTMLButtonElement>('#tools [data-tool="cup"]');
 const torchBtn = $<HTMLButtonElement>('#torchBtn');
-const levelBtn = $<HTMLButtonElement>('#levelBtn');
 const sheet = $('#sheet');
 const startEl = $('#start');
 
@@ -154,10 +153,13 @@ function toolHint() {
     case 'swipe':
       return 'Drag through wet paint to push it';
     case 'tilt':
-      return 'Drag to tilt the canvas';
+      if (tilt.mode === 'sensor') return 'Tilt your phone · tap the canvas to level again';
+      if (tilt.mode === 'pending') return 'Tilt your phone …';
+      return coarse ? 'No tilt sensor: drag to tilt the canvas' : 'Drag or use the arrow keys to tilt the canvas';
   }
 }
 function setTool(t: Tool, announce = true) {
+  if (t === 'tilt' && tool !== 'tilt') startTilt();
   tool = t;
   document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tool === t)));
   if (announce) hint(toolHint());
@@ -271,7 +273,7 @@ canvas.addEventListener('pointermove', e => {
     studio.pour.y = p.y;
   } else if (tool === 'swipe' && studio.push) {
     Object.assign(studio.push, { x: p.x, y: p.y, vx: drag.vx, vy: drag.vy });
-  } else if (tool === 'tilt') {
+  } else if (tool === 'tilt' && tilt.mode !== 'sensor') {
     let x = ((p.x - drag.sx) / sim.dom[0]) * 3,
       y = ((p.y - drag.sy) / sim.dom[0]) * 3;
     const l = Math.hypot(x, y);
@@ -291,7 +293,10 @@ function endDrag(e: PointerEvent) {
   studio.pour = null;
   studio.push = null;
   markPouring(false);
-  if (tool === 'tilt') manualTilt.x = manualTilt.y = 0;
+  if (tool === 'tilt') {
+    manualTilt.x = manualTilt.y = 0;
+    if (tilt.mode === 'sensor' && !d.moved) levelNow();
+  }
   if (tool === 'cup' && d.onCup && studio.cup && !studio.cup.lifting) {
     // freshly placed: next step is pouring into it
     setTool('pour', false);
@@ -326,12 +331,6 @@ torchBtn.addEventListener('pointerdown', e => {
 for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) torchBtn.addEventListener(ev, () => torch(false));
 torchBtn.addEventListener('contextmenu', e => e.preventDefault());
 
-levelBtn.addEventListener('click', () => {
-  wake();
-  tilt.level();
-  navigator.vibrate?.(10);
-  hint('Level: this pose is flat now');
-});
 
 // menu
 $('#menuBtn').addEventListener('click', () => (sheet.hidden = false));
@@ -350,7 +349,6 @@ sheet.addEventListener('click', e => {
     resize();
     demo.start();
   } else if (act === 'save') saveRequested = true;
-  else if (act === 'level') levelBtn.click();
   else if (act === 'help') {
     startEl.hidden = false;
     startEl.classList.remove('gone');
@@ -386,13 +384,25 @@ addEventListener('blur', () => {
 });
 
 // ---------------------------------------------------------------- tilt + start
-tilt.onMode = mode => {
-  const sensor = mode === 'sensor';
-  document.body.classList.toggle('sensor', sensor);
-  levelBtn.hidden = !sensor;
-  $('#tools [data-tool="tilt"]').hidden = sensor;
-  if (mode === 'sensor') hint('Tilt your phone to make the paint flow');
-  if (mode === 'manual') hint(coarse ? 'No tilt sensor: use the Tilt tool' : 'Tilt with the arrow keys or the Tilt tool');
+// Tilt acts only while the Tilt tool is on. Turning it on (or tapping the
+// canvas) takes the current pose as flat. The sensor permission is asked on
+// the first use (iOS needs a user gesture).
+let tiltStarted = false;
+function startTilt() {
+  wake();
+  if (!tiltStarted) {
+    tiltStarted = true;
+    tilt.start();
+  } else if (tilt.mode === 'sensor') tilt.level();
+}
+function levelNow() {
+  wake();
+  tilt.level();
+  navigator.vibrate?.(10);
+  hint('Level: this pose is flat now', 2000);
+}
+tilt.onMode = () => {
+  if (tool === 'tilt') hint(toolHint());
 };
 
 let wakeLock: { release(): Promise<void> } | null = null;
@@ -413,9 +423,8 @@ function begin(withDemo: boolean) {
   setTimeout(() => (startEl.hidden = true), 400);
   if (!started) {
     started = true;
-    tilt.start();
     keepAwake();
-  } else if (tilt.mode === 'sensor') tilt.level();
+  }
   if (withDemo) {
     rebuild();
     resize();
@@ -469,7 +478,13 @@ function frame(now: number) {
   const t = studio.tilt;
   let view: [number, number];
   if (!demo.tilting) {
-    if (tilt.mode === 'sensor') {
+    if (tool !== 'tilt') {
+      // tilt is off: the canvas lies flat (arrow keys still work on desktop)
+      const kx = (keysTilt.ArrowRight ? 1 : 0) - (keysTilt.ArrowLeft ? 1 : 0);
+      const ky = (keysTilt.ArrowUp ? 1 : 0) - (keysTilt.ArrowDown ? 1 : 0);
+      t.tx = kx * P.tiltMax * 0.75;
+      t.ty = ky * P.tiltMax * 0.75;
+    } else if (tilt.mode === 'sensor') {
       const { x, y } = tilt.value;
       const m = Math.hypot(x, y);
       const k = m > DEAD ? Math.min(P.tiltMax, (m - DEAD) * GAIN) / m : 0;
@@ -495,7 +510,7 @@ function frame(now: number) {
     sim.step(dt, forces);
   } else if (Math.hypot(t.tx - t.x, t.ty - t.y) > 0) studio.update(dt);
 
-  if (tilt.mode === 'sensor' && !demo.tilting) {
+  if (tilt.mode === 'sensor' && tool === 'tilt' && !demo.tilting) {
     view = [tilt.value.x, tilt.value.y];
     canvas.style.transform = '';
   } else {

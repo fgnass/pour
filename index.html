@@ -20,9 +20,6 @@
           <span class="icon" data-icon="menu"></span>
         </button>
         <p id="hint" class="hint" aria-live="polite"></p>
-        <button id="levelBtn" class="round" aria-label="Level the canvas" hidden>
-          <span class="icon" data-icon="my_location"></span>
-        </button>
       </header>
 
       <footer class="dock">
@@ -41,7 +38,7 @@
               <span class="icon" data-icon="swipe" data-fill></span>
               <span>Swipe</span>
             </button>
-            <button data-tool="tilt" role="radio" hidden>
+            <button data-tool="tilt" role="radio">
               <span class="icon" data-icon="3d_rotation" data-fill></span>
               <span>Tilt</span>
             </button>
@@ -59,7 +56,6 @@
         <button data-act="new">New canvas</button>
         <button data-act="demo">Play demo</button>
         <button data-act="save">Save image</button>
-        <button data-act="level" class="sensor-only">Level the canvas</button>
         <button data-act="help">How it works</button>
       </div>
     </div>
@@ -75,7 +71,7 @@
           <li>Drag the cup off in a spiral, then <b>lift</b> it.</li>
           <li><b>Tilt</b> your phone until the paint covers the canvas.</li>
         </ol>
-        <p class="note">Hold your phone as you like and tap Start. That pose is “level”.</p>
+        <p class="note">Tilt only acts while the Tilt tool is on. The pose at the moment you turn it on counts as flat.</p>
         <div class="start-actions">
           <button id="startBtn" class="primary">Start</button>
           <button id="demoBtn">Watch demo</button>

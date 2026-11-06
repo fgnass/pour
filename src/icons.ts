@@ -1,6 +1,5 @@
 // Material Symbols (rounded, weight 400), inlined as SVG so they work offline.
 import menu from '@material-symbols/svg-400/rounded/menu.svg?raw';
-import myLocation from '@material-symbols/svg-400/rounded/my_location.svg?raw';
 import waterDrop from '@material-symbols/svg-400/rounded/water_drop.svg?raw';
 import waterDropFill from '@material-symbols/svg-400/rounded/water_drop-fill.svg?raw';
 import glassCup from '@material-symbols/svg-400/rounded/glass_cup.svg?raw';
@@ -15,7 +14,6 @@ import fireFill from '@material-symbols/svg-400/rounded/local_fire_department-fi
 
 const ICONS: Record<string, [string, string?]> = {
   menu: [menu],
-  my_location: [myLocation],
   water_drop: [waterDrop, waterDropFill],
   glass_cup: [glassCup, glassCupFill],
   swipe: [swipe, swipeFill],

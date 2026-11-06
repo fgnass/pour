@@ -121,10 +121,6 @@ svg {
 .round:active {
   background: var(--glass-hi);
 }
-.top .round[hidden] {
-  display: grid;
-  visibility: hidden;
-}
 
 .hint {
   flex: 1;
@@ -137,6 +133,8 @@ svg {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
   opacity: 0;
   transition: opacity 0.4s;
+  /* keep the hint centred: same width as the menu button on the left */
+  margin-right: 54px;
 }
 .hint span {
   display: inline-block;
@@ -282,9 +280,6 @@ svg {
 }
 .sheet-panel button:active {
   background: var(--glass-hi);
-}
-body:not(.sensor) .sensor-only {
-  display: none;
 }
 
 /* ------------------------------------------------------------------ start */
