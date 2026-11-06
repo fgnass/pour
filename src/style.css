@@ -356,3 +356,8 @@ body:not(.sensor) .sensor-only {
   color: #141414;
   border-color: transparent;
 }
+
+/* the cup button turns into Lift while a cup is on the canvas */
+.seg button.lift {
+  color: var(--text);
+}

@@ -14,7 +14,7 @@ mountIcons();
 const canvas = $<HTMLCanvasElement>('#gl');
 const hintEl = $('#hint');
 const paintsEl = $('#paints');
-const liftBtn = $<HTMLButtonElement>('#liftBtn');
+const cupBtn = $<HTMLButtonElement>('#tools [data-tool="cup"]');
 const torchBtn = $<HTMLButtonElement>('#torchBtn');
 const levelBtn = $<HTMLButtonElement>('#levelBtn');
 const sheet = $('#sheet');
@@ -145,10 +145,12 @@ let tool: Tool = 'pour';
 function toolHint() {
   switch (tool) {
     case 'pour':
-      return studio.cup && !studio.cup.lifting ? 'Hold on the cup to pour paint into it' : `Hold to pour ${MATS[paint].name.toLowerCase()}`;
+      return studio.cup && !studio.cup.lifting
+        ? 'Hold on the cup to pour into it · drag the cup to move it'
+        : `Hold to pour ${MATS[paint].name.toLowerCase()}`;
     case 'cup':
       if (studio.cup?.lifting) return 'Lifting the cup …';
-      return studio.cup ? 'Drag anywhere to move the cup · double-tap to lift' : 'Tap to set the cup into the paint';
+      return 'Tap to set the cup into the paint';
     case 'swipe':
       return 'Drag through wet paint to push it';
     case 'tilt':
@@ -160,12 +162,47 @@ function setTool(t: Tool, announce = true) {
   document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tool === t)));
   if (announce) hint(toolHint());
 }
-document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool as Tool)));
+document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
+  b.addEventListener('click', () => {
+    // with a cup on the canvas, the cup button lifts it
+    if (b === cupBtn && cupOnCanvas) lift();
+    else setTool(b.dataset.tool as Tool);
+  }),
+);
+
+// The cup button is the Cup tool, or Lift while a cup is on the canvas.
+let cupOnCanvas = false;
+const CUP_HTML = cupBtn.innerHTML;
+const LIFT_HTML = '<span class="icon" data-icon="upload"></span><span>Lift</span>';
+function syncCupBtn() {
+  const on = !!studio.cup && !studio.cup.lifting;
+  if (on === cupOnCanvas) return;
+  cupOnCanvas = on;
+  cupBtn.innerHTML = on ? LIFT_HTML : CUP_HTML;
+  cupBtn.setAttribute('role', on ? 'button' : 'radio');
+  cupBtn.classList.toggle('lift', on);
+  mountIcons(cupBtn);
+  if (on && tool === 'cup') setTool('pour', false);
+  cupBtn.setAttribute('aria-checked', String(tool === 'cup'));
+}
 
 // ---------------------------------------------------------------- canvas gestures
-type Drag = { id: number; x: number; y: number; sx: number; sy: number; t: number; vx: number; vy: number; cx: number; cy: number; moved: boolean };
+type Drag = {
+  id: number;
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+  t: number;
+  vx: number;
+  vy: number;
+  cx: number;
+  cy: number;
+  moved: boolean;
+  /** started on the cup: hold to pour into it, drag to move it */
+  onCup: boolean;
+};
 let drag: Drag | null = null;
-let lastTap = { t: 0, x: 0, y: 0 };
 const manualTilt = { x: 0, y: 0 };
 
 canvas.addEventListener('pointerdown', e => {
@@ -178,21 +215,25 @@ canvas.addEventListener('pointerdown', e => {
     /* pointer already gone */
   }
   const p = toDomain(e);
-  drag = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now(), vx: 0, vy: 0, cx: 0, cy: 0, moved: false };
-  if (tool === 'pour') {
+  drag = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now(), vx: 0, vy: 0, cx: 0, cy: 0, moved: false, onCup: false };
+  const cup = studio.cup;
+  if (cup && tool !== 'tilt' && studio.hitsCup(p.x, p.y, 1.3)) {
+    drag.onCup = true;
+    drag.cx = cup.tx;
+    drag.cy = cup.ty;
+    if (tool === 'pour') {
+      studio.pour = { m: paint, x: cup.x, y: cup.y };
+      markPouring(true);
+    }
+  } else if (tool === 'pour') {
     studio.pour = { m: paint, x: p.x, y: p.y };
     markPouring(true);
-  } else if (tool === 'cup') {
-    const cup = studio.cup;
-    if (!cup) {
-      studio.placeCup(p.x, p.y);
-      navigator.vibrate?.(12);
-      drag.cx = p.x;
-      drag.cy = p.y;
-    } else if (!cup.lifting) {
-      drag.cx = cup.tx;
-      drag.cy = cup.ty;
-    }
+  } else if (tool === 'cup' && !cup) {
+    studio.placeCup(p.x, p.y);
+    navigator.vibrate?.(12);
+    drag.onCup = true;
+    drag.cx = p.x;
+    drag.cy = p.y;
   } else if (tool === 'swipe') {
     studio.push = { x: p.x, y: p.y, vx: 0, vy: 0, r: 0.045 };
   }
@@ -209,13 +250,25 @@ canvas.addEventListener('pointermove', e => {
   drag.y = p.y;
   drag.t = now;
   if (Math.hypot(p.x - drag.sx, p.y - drag.sy) * (layout.w / sim.dom[0]) > 10) drag.moved = true;
-  if (tool === 'pour' && studio.pour) {
+  if (drag.onCup) {
+    const cup = studio.cup;
+    if (!cup || cup.lifting) return;
+    if (drag.moved) {
+      // dragging moves the cup; pouring stops while it moves
+      if (studio.pour) {
+        studio.pour = null;
+        markPouring(false);
+      }
+      const [W, H] = sim.dom;
+      cup.tx = Math.min(W, Math.max(0, drag.cx + p.x - drag.sx));
+      cup.ty = Math.min(H, Math.max(0, drag.cy + p.y - drag.sy));
+    } else if (studio.pour) {
+      studio.pour.x = cup.x;
+      studio.pour.y = cup.y;
+    }
+  } else if (tool === 'pour' && studio.pour) {
     studio.pour.x = p.x;
     studio.pour.y = p.y;
-  } else if (tool === 'cup' && studio.cup && !studio.cup.lifting) {
-    const [W, H] = sim.dom;
-    studio.cup.tx = Math.min(W, Math.max(0, drag.cx + p.x - drag.sx));
-    studio.cup.ty = Math.min(H, Math.max(0, drag.cy + p.y - drag.sy));
   } else if (tool === 'swipe' && studio.push) {
     Object.assign(studio.push, { x: p.x, y: p.y, vx: drag.vx, vy: drag.vy });
   } else if (tool === 'tilt') {
@@ -239,20 +292,11 @@ function endDrag(e: PointerEvent) {
   studio.push = null;
   markPouring(false);
   if (tool === 'tilt') manualTilt.x = manualTilt.y = 0;
-  if (tool === 'cup' && !d.moved) {
-    const now = performance.now();
-    const near = Math.hypot(d.x - lastTap.x, d.y - lastTap.y) < 0.08;
-    if (now - lastTap.t < 350 && near) {
-      lift();
-      lastTap.t = 0;
-      return;
-    }
-    lastTap = { t: now, x: d.x, y: d.y };
-  }
-  if (tool === 'cup' && studio.cup && !studio.cup.lifting && studio.cupVolume() < 1e-6) {
-    // freshly placed and still empty: next step is pouring into it
+  if (tool === 'cup' && d.onCup && studio.cup && !studio.cup.lifting) {
+    // freshly placed: next step is pouring into it
     setTool('pour', false);
-    hint('Now hold on the cup to pour paint into it');
+    syncCupBtn();
+    hint('Hold on the cup to pour colours into it');
   }
 }
 canvas.addEventListener('pointerup', endDrag);
@@ -269,7 +313,6 @@ function lift() {
   studio.liftCup();
   navigator.vibrate?.([8, 40, 8]);
 }
-liftBtn.addEventListener('click', lift);
 
 const torch = (on: boolean) => {
   studio.torch = on;
@@ -415,7 +458,6 @@ async function saveImage() {
 const DEAD = 0.03; // ~2° of hand jitter does nothing
 const GAIN = 1.7; // full tilt at about 19°
 let last = performance.now();
-let liftWasEnabled = false;
 
 function frame(now: number) {
   const rdt = Math.min((now - last) / 1000, 1 / 30);
@@ -472,11 +514,7 @@ function frame(now: number) {
     saveImage();
   }
 
-  const canLift = !!studio.cup && !studio.cup.lifting;
-  if (canLift !== liftWasEnabled) {
-    liftBtn.disabled = !canLift;
-    liftWasEnabled = canLift;
-  }
+  syncCupBtn();
   requestAnimationFrame(frame);
 }
 

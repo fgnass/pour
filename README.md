@@ -20,7 +20,8 @@ URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels p
   Without a sensor the app shows a Tilt tool and tilts the canvas on screen (arrow keys on desktop).
 - **Pour**: hold a finger on the canvas to pour the selected paint. On the cup it goes into the cup;
   colours sink below the white.
-- **Cup**: tap to set it down, drag anywhere to move it (relative drag), double-tap or Lift to lift it.
+- **Cup**: tap to set it down. While it sits on the canvas, the Cup button is Lift. Hold on the cup to pour
+  into it, drag from the cup to move it.
 - **Swipe** pushes wet paint, **Torch** makes more cells pop up.
 
 Code: `src/sim/` (GL, shaders, solver), `src/model.ts` (cup, sources, cells), `src/tilt.ts`,
