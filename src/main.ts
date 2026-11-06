@@ -23,10 +23,30 @@ const startEl = $('#start');
 // ---------------------------------------------------------------- setup
 const qs = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
-const quality: Quality = {
-  n: +(qs.get('n') ?? 0) || (coarse ? 200 : 288),
-  np: +(qs.get('np') ?? 0) || (coarse ? 512 : 720),
+// Crash guard: some phone GPUs kill the tab. We note how far the start got;
+// if the last start never finished, this one runs in safe mode.
+const BOOT_KEY = 'pour.boot';
+let crashedAt: string | null = null;
+try {
+  crashedAt = localStorage.getItem(BOOT_KEY);
+} catch {
+  /* no storage */
+}
+const boot = (stage: string | null) => {
+  try {
+    if (stage) localStorage.setItem(BOOT_KEY, stage);
+    else localStorage.removeItem(BOOT_KEY);
+  } catch {
+    /* no storage */
+  }
 };
+const safe = qs.has('safe') || (!!crashedAt && !qs.has('unsafe'));
+const quality: Quality = {
+  n: +(qs.get('n') ?? 0) || (safe ? 160 : coarse ? 200 : 288),
+  np: +(qs.get('np') ?? 0) || (safe ? 384 : coarse ? 512 : 720),
+  glitter: qs.get('glitter') !== '0' && !safe,
+};
+boot('init');
 
 let g: GL;
 try {
@@ -68,6 +88,7 @@ const syncSoundBtn = () => (soundBtn.textContent = sound.enabled ? 'Sound: on' :
 syncSoundBtn();
 
 const viewAspect = () => innerWidth / innerHeight;
+boot('compile');
 let sim = new Sim(g, viewAspect(), quality);
 let studio = new Studio(sim);
 let demo = new Demo(studio);
@@ -528,7 +549,8 @@ function begin(withDemo: boolean) {
     rebuild();
     resize();
     demo.start();
-  } else hint(toolHint());
+  } else if (safe && crashedAt) hint(`Safe mode: the last start crashed (${crashedAt}). Lower quality, no glitter.`, 6000);
+  else hint(toolHint());
 }
 $('#startBtn').addEventListener('click', () => begin(false));
 $('#demoBtn').addEventListener('click', () => begin(true));
@@ -561,6 +583,21 @@ async function saveImage() {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+
+// ---------------------------------------------------------------- crash guard
+// A stage counts as safe after it ran for a few seconds without a crash.
+const guardStart: Record<string, number> = {};
+function guard(stage: string, now: number) {
+  const t = guardStart[stage];
+  if (t === undefined) {
+    guardStart[stage] = now;
+    boot(stage);
+  } else if (t >= 0 && now - t > 4000) {
+    guardStart[stage] = -1;
+    boot(null);
+  }
+}
+if (crashedAt) console.warn(`Pour: the last start stopped at "${crashedAt}". Safe mode${safe ? ' on' : ' off (?unsafe)'}.`);
 
 // ---------------------------------------------------------------- loop
 const DEAD = 0.03; // ~2° of hand jitter does nothing
@@ -612,6 +649,7 @@ function frame(now: number) {
   if (simulate) {
     const forces = studio.update(dt);
     sim.step(dt, forces);
+    guard('simulate', now);
   } else if (Math.hypot(t.tx - t.x, t.ty - t.y) > 0) studio.update(dt);
 
   if (tilt.mode === 'sensor' && tool === 'tilt' && !demo.tilting) {
@@ -627,6 +665,7 @@ function frame(now: number) {
   const viewMoved = Math.hypot(view[0] - lastView[0], view[1] - lastView[1]) > 0.003;
   if (simulate || viewMoved || saveRequested || needsDraw) {
     sim.render(studio.overlay(view), canvas.width, canvas.height);
+    guard('render', now);
     lastView = view;
     needsDraw = false;
   }

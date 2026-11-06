@@ -12,7 +12,11 @@ npm run dev:https   # self-signed HTTPS on the LAN: device motion needs a secure
 npm run build       # static site in dist/
 ```
 
-URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels per short side, `?fps=60` frame rate (default 30).
+URL options: `?n=200` thickness cells per short side, `?np=512` pigment texels per short side, `?fps=60` frame rate (default 30), `?glitter=0` no glitter flakes, `?safe` low quality without glitter, `?unsafe` ignore the crash guard.
+
+Crash guard: if the last start did not get through compiling, rendering or
+simulating (some phone GPUs kill the tab), the next start runs in safe mode
+and says at which stage the last one stopped.
 
 ## How it works
 

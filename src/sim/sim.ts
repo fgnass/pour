@@ -54,7 +54,7 @@ export type Overlay = {
   torch: { x: number; y: number; r: number } | null;
 };
 
-export type Quality = { n: number; np: number };
+export type Quality = { n: number; np: number; glitter: boolean };
 
 const PW = 256;
 const PCOUNT = PW * PW;
@@ -97,7 +97,9 @@ export class Sim {
   private ppi = 0;
   private pRing = 0;
   private spawns: number[] = [];
-  private prog: Record<'flux' | 'vel' | 'pig' | 'render' | 'clear' | 'part' | 'mask' | 'glit' | 'glitter', Program>;
+  private prog: Record<'flux' | 'vel' | 'pig' | 'render' | 'clear' | 'part' | 'mask', Program>;
+  /** glitter programs; null when glitter is off */
+  private glitProg: { glit: Program; glitter: Program } | null;
   private resources: { tex: WebGLTexture[]; fb: WebGLFramebuffer[] } = { tex: [], fb: [] };
 
   constructor(g: GL, aspect: number, q: Quality) {
@@ -146,9 +148,8 @@ export class Sim {
       clear: g.compile(CLEAR_FS),
       part: g.compile(PART_FS),
       mask: g.compile(MASK_FS, MASK_VS),
-      glit: g.compile(GLIT_FS),
-      glitter: g.compile(GLITTER_FS, GLITTER_VS),
     };
+    this.glitProg = q.glitter ? { glit: g.compile(GLIT_FS), glitter: g.compile(GLITTER_FS, GLITTER_VS) } : null;
     this.reset();
   }
 
@@ -156,7 +157,7 @@ export class Sim {
     const gl = this.g.gl;
     this.resources.fb.forEach(f => gl.deleteFramebuffer(f));
     this.resources.tex.forEach(t => gl.deleteTexture(t));
-    Object.values(this.prog).forEach(p => gl.deleteProgram(p.prog));
+    Object.values({ ...this.prog, ...this.glitProg }).forEach(p => gl.deleteProgram(p.prog));
   }
 
   reset() {
@@ -284,7 +285,8 @@ export class Sim {
     this.ppi = 1 - this.ppi;
 
     // glitter rides on the surface
-    p = this.prog.glit;
+    if (this.glitProg) {
+    p = this.glitProg.glit;
     gl.useProgram(p.prog);
     g.bindTex(p, 'uP', 0, this.GT[this.gi]);
     g.bindTex(p, 'uV', 1, this.V);
@@ -295,6 +297,7 @@ export class Sim {
     gl.uniform4f(p.uni.uTorch, ...f.torch);
     g.draw(this.GTfb[1 - this.gi], GW, GH);
     this.gi = 1 - this.gi;
+    }
 
     p = this.prog.mask;
     gl.useProgram(p.prog);
@@ -379,13 +382,12 @@ export class Sim {
       gl.uniform3fv(p.uni.uStreamCol, o.stream.col);
     } else gl.uniform4f(p.uni.uStream, 0, 0, 0, 0);
     g.draw(null, width, height);
-    this.renderGlitter(o, width);
+    if (this.glitProg) this.renderGlitter(this.glitProg.glitter, o, width);
   }
 
-  private renderGlitter(o: Overlay, width: number) {
+  private renderGlitter(p: Program, o: Overlay, width: number) {
     const g = this.g;
     const gl = g.gl;
-    const p = this.prog.glitter;
     gl.useProgram(p.prog);
     g.bindTex(p, 'uP', 0, this.GT[this.gi]);
     g.bindTex(p, 'uV', 1, this.V);
