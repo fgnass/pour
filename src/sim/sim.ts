@@ -23,6 +23,8 @@ export type Source = {
   u: number[];
   g: number[];
   streak: number;
+  /** 0..1: new paint pushes the old paint away instead of mixing into it */
+  plug?: number;
 };
 
 export const noSource = (): Source => ({ x: 0, y: 0, r: 0, rate: 0, s: [0, 0, 0, 0], u: [0, 0, 0, 0], g: [0, 0], streak: 0 });
@@ -306,6 +308,7 @@ export class Sim {
     gl.uniform4fv(p.uni.uSrcU, f.src.flatMap(s => s.u));
     gl.uniform2fv(p.uni.uSrcG, f.src.flatMap(s => s.g));
     gl.uniform1fv(p.uni.uSrcStreak, f.src.map(s => s.streak));
+    gl.uniform1fv(p.uni.uSrcPlug, f.src.map(s => s.plug ?? 0));
     gl.uniform1f(p.uni.uTime, this.time);
     g.draw(this.PSfb[1 - this.pi], this.PX, this.PY);
     this.pi = 1 - this.pi;

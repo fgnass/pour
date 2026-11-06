@@ -1,6 +1,6 @@
 // Studio state: the cup, paint sources and cells. Turns the user's actions
 // into forces for the simulation. No DOM here.
-import { MATS, oneHot, splitComp, type Comp } from './sim/materials';
+import { MATS, mixColor, oneHot, splitComp, type Comp } from './sim/materials';
 import { NUM_SRC } from './sim/shaders';
 import { MAX_IMPOSED, noSource, P, type Forces, type Overlay, type Sim, type Source } from './sim/sim';
 
@@ -20,7 +20,7 @@ export const M = {
   // releases the rest.
   leakRest: 0.012, // fraction of the contents per second
   leakMove: 2.5, // extra fraction per second per unit of cup speed
-  leakLift: 3.5,
+  liftSecs: 1.4, // a lifted cup empties at a steady rate in this time
   maxRings: 10, // colour rings shown in the cup
 };
 
@@ -29,9 +29,12 @@ const clampVel = (vx: number, vy: number): [number, number] => {
   return m > MAX_IMPOSED ? [(vx * MAX_IMPOSED) / m, (vy * MAX_IMPOSED) / m] : [vx, vy];
 };
 
-type Layer = { m: number; c: Comp; v: number };
-/** What you see from above: each pour pushes the older paint outwards. */
-export type Ring = { col: [number, number, number]; v: number; ox: number; oy: number; seed: number };
+/**
+ * One pour into the cup (oldest first). Seen from above, each pour pushes the
+ * older paint outwards, so the pours show as rings. They also leave the cup
+ * in this order: the oldest paint is at the bottom.
+ */
+export type Ring = { m: number; c: Comp; v: number; ox: number; oy: number; seed: number };
 
 export type Cup = {
   x: number;
@@ -41,11 +44,13 @@ export type Cup = {
   vx: number;
   vy: number;
   R: number;
-  layers: Layer[];
   /** oldest first */
   rings: Ring[];
   lifting: boolean;
   liftT: number;
+  /** contents when the lift started */
+  liftV: number;
+  seed: number;
   alpha: number;
 };
 
@@ -79,7 +84,7 @@ export class Studio {
   }
 
   placeCup(x: number, y: number) {
-    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, layers: [], rings: [], lifting: false, liftT: 0, alpha: 1 };
+    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, rings: [], lifting: false, liftT: 0, liftV: 0, seed: Math.random() * 6.283, alpha: 1 };
     return this.cup;
   }
 
@@ -87,6 +92,7 @@ export class Studio {
     if (this.cup && !this.cup.lifting) {
       this.cup.lifting = true;
       this.cup.liftT = 0;
+      this.cup.liftV = this.cupVolume();
     }
   }
 
@@ -97,65 +103,50 @@ export class Studio {
   }
 
   cupVolume(c = this.cup) {
-    return c ? c.layers.reduce((a, l) => a + l.v, 0) : 0;
-  }
-
-  private pourIntoCup(m: number, v: number, ox: number, oy: number) {
-    this.addRing(m, v, ox, oy);
-    const L = this.cup!.layers;
-    let idx = L.length;
-    // colours poured from high sink below the white (index 0 = bottom)
-    if (m !== 0) while (idx > 0 && L[idx - 1].m === 0) idx--;
-    const below = L[idx - 1];
-    if (below && below.m === m) below.v += v;
-    else L.splice(idx, 0, { m, c: oneHot(m), v });
+    return c ? c.rings.reduce((a, r) => a + r.v, 0) : 0;
   }
 
   /** The newest ring grows while the same colour lands at the same spot. */
-  private addRing(m: number, v: number, ox: number, oy: number) {
+  private pourIntoCup(m: number, v: number, ox: number, oy: number) {
     const R = this.cup!.rings;
     const top = R[R.length - 1];
-    const col = MATS[m].rgb;
-    if (top && top.col === col && Math.hypot(top.ox - ox, top.oy - oy) < M.cupR * 0.3) {
+    if (top && top.m === m && Math.hypot(top.ox - ox, top.oy - oy) < M.cupR * 0.3) {
       top.ox += ((ox - top.ox) * v) / (top.v + v);
       top.oy += ((oy - top.oy) * v) / (top.v + v);
       top.v += v;
       return;
     }
-    R.push({ col, v, ox, oy, seed: Math.random() * 6.283 });
+    R.push({ m, c: oneHot(m), v, ox, oy, seed: Math.random() * 6.283 });
     if (R.length > M.maxRings) {
       // the two oldest rings blend into one
       const [a, b] = R.splice(0, 2);
       const w = a.v + b.v;
-      R.unshift({ col: a.col.map((x, i) => (x * a.v + b.col[i] * b.v) / w) as Ring['col'], v: w, ox: 0, oy: 0, seed: a.seed });
+      R.unshift({ m: -1, c: a.c.map((x, i) => (x * a.v + b.c[i] * b.v) / w), v: w, ox: 0, oy: 0, seed: a.seed });
     }
   }
 
+  /** Take q of paint out of the cup: the oldest pour first, a little mixed. */
   private drainCup(q: number) {
     const cup = this.cup!;
-    // the rings shrink with the contents
-    const k = Math.max(0, 1 - q / (this.cupVolume() || 1));
-    for (const r of cup.rings) r.v *= k;
     const out = new Float64Array(MATS.length);
     if (q <= 0) return out;
     const V = this.cupVolume();
-    // a little of the outflow is well mixed, the rest comes from the bottom layer
-    const qm = q * 0.1;
-    for (const l of cup.layers) {
-      const take = (qm * l.v) / V;
-      for (let k = 0; k < out.length; k++) out[k] += l.c[k] * take;
-      l.v -= take;
+    const qm = q * 0.03;
+    for (const r of cup.rings) {
+      const take = (qm * r.v) / V;
+      for (let k = 0; k < out.length; k++) out[k] += r.c[k] * take;
+      r.v -= take;
     }
     let rem = q - qm;
-    while (rem > 1e-12 && cup.layers.length) {
-      const l = cup.layers[0];
-      const take = Math.min(l.v, rem);
-      for (let k = 0; k < out.length; k++) out[k] += l.c[k] * take;
-      l.v -= take;
+    while (rem > 1e-12 && cup.rings.length) {
+      const r = cup.rings[0];
+      const take = Math.min(r.v, rem);
+      for (let k = 0; k < out.length; k++) out[k] += r.c[k] * take;
+      r.v -= take;
       rem -= take;
-      if (l.v <= 1e-9) cup.layers.shift();
+      if (r.v <= 1e-9) cup.rings.shift();
     }
-    cup.layers = cup.layers.filter(l => l.v > 1e-9);
+    cup.rings = cup.rings.filter(r => r.v > 1e-9);
     const s = out.reduce((a, b) => a + b, 0) || 1;
     for (let k = 0; k < out.length; k++) out[k] /= s;
     return out;
@@ -246,19 +237,22 @@ export class Studio {
       cup.vy += (vy - cup.vy) * 0.5;
       const speed = Math.hypot(cup.vx, cup.vy);
       const V = this.cupVolume();
-      let leak = M.leakRest + M.leakMove * speed;
-      if (cup.lifting) leak = M.leakLift;
+      const leak = M.leakRest + M.leakMove * speed;
       let q = V * (1 - Math.exp(-leak * dt));
-      if (cup.lifting) q = Math.min(V, Math.max(q, 0.04 * dt));
+      // lifted: the paint runs out at a steady rate, one pour after the other
+      if (cup.lifting) q = Math.min(V, Math.max((cup.liftV / M.liftSecs) * dt, 0.04 * dt));
       if (q > 1e-7) {
         const comp = this.drainCup(q);
-        const subFrac = cup.lifting ? 0.75 : 0.97 - 0.4 * Math.min(1, speed / 0.25);
+        const subFrac = cup.lifting ? 0.3 : 0.97 - 0.4 * Math.min(1, speed / 0.25);
+        // a lifted cup wobbles a little: the rings come out uneven
+        const w = cup.lifting ? cup.R * 0.25 * Math.min(1, cup.liftT * 2) : 0;
         src[0] = {
-          x: cup.x,
-          y: cup.y,
-          r: cup.R * (cup.lifting ? 1.5 : 1.08),
+          x: cup.x + w * Math.sin(cup.liftT * 4.1 + cup.seed),
+          y: cup.y + w * Math.cos(cup.liftT * 3.3 + cup.seed * 1.7),
+          r: cup.R * (cup.lifting ? 0.9 : 1.08),
           rate: q / dt,
-          streak: cup.lifting ? 0.6 : 0.9,
+          streak: cup.lifting ? 0.2 : 0.9,
+          plug: cup.lifting ? 1 : 0,
           ...splitComp(comp, subFrac),
         };
         // cells form where the coloured paint comes out from under the rim
@@ -273,8 +267,8 @@ export class Studio {
         cup.liftT += dt;
         cup.alpha = Math.max(0, 1 - cup.liftT / 0.5);
         const tw = Math.max(0, 1 - cup.liftT / 0.9);
-        this.swirl = [cup.x, cup.y, cup.R * 1.7, 9 * tw];
-        if (this.cupVolume() < 1e-5 && cup.liftT > 0.9) this.cup = null;
+        this.swirl = [cup.x, cup.y, cup.R * 1.7, 4 * tw];
+        if (this.cupVolume() < 1e-5 && cup.liftT > M.liftSecs) this.cup = null;
       }
     }
 
@@ -309,7 +303,7 @@ export class Studio {
       const rad = Ri * Math.sqrt(Math.max(0, cum) / V);
       cum -= r.v;
       const k = 1 - rad / Ri;
-      return { x: c.x + r.ox * k, y: c.y + r.oy * k, r: rad, seed: r.seed, col: r.col };
+      return { x: c.x + r.ox * k, y: c.y + r.oy * k, r: rad, seed: r.seed, col: mixColor(r.c) };
     });
   }
 

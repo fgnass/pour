@@ -96,7 +96,10 @@ void main() {
   vec2 F = uTilt - uK * vec2(hr - hl, hu - hd) / (2.0 * uDx);
   float hc = min(hm, uCap);
   float y = max(0.0, 1.0 - uTau / (hc * length(F) + 1e-6));
-  vec2 u = uA * hc * hc * F * y + imposedVel(p) * step(0.02, hm);
+  // mean velocity = flux / thickness. The flux uses the capped thickness, so
+  // divide by the real one: thick paint must not carry its colour faster
+  // than the paint itself moves.
+  vec2 u = uA * hc * hc * hc / max(hm, 1e-3) * F * y + imposedVel(p) * step(0.02, hm);
   float m = length(u);
   if (m > 1.5) u *= 1.5 / m;
   o = vec4(u, h, 1.0);
@@ -127,6 +130,7 @@ uniform vec4 uSrcS[${NUM_SRC}];
 uniform vec4 uSrcU[${NUM_SRC}];
 uniform vec2 uSrcG[${NUM_SRC}];
 uniform float uSrcStreak[${NUM_SRC}];
+uniform float uSrcPlug[${NUM_SRC}];
 layout(location = 0) out vec4 oS;
 layout(location = 1) out vec4 oU;
 layout(location = 2) out vec4 oG;
@@ -186,6 +190,9 @@ void main() {
     if (r <= 0.0) continue;
     float dh = uSrc[i].w * disc(p, uSrc[i].xy, r) / (DISC_AREA * r * r) * uDt;
     float fr = dh / (h + dh + 1e-4);
+    // plug flow (a lifted cup): the new paint fills the core and pushes the
+    // older paint outwards, so consecutive colours form rings
+    fr = mix(fr, 1.0 - smoothstep(0.55 * r, 0.7 * r, length(p - uSrc[i].xy)), uSrcPlug[i]);
     // paint escapes under the rim in fingers: radial streaks of surface colour
     vec2 d = p - uSrc[i].xy;
     float a = atan(d.y, d.x) / 6.2831853 * 46.0 + uTime * 0.7;
