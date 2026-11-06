@@ -39,6 +39,17 @@ function showError(msg: string) {
   startEl.hidden = true;
 }
 
+const SETTLE_MS = 8000; // keep simulating this long after the last activity
+let lastBusy = -Infinity;
+let lastView: [number, number] = [NaN, NaN];
+let needsDraw = true;
+
+/** Draw again on the next frame (after resize, reset …). */
+function wake() {
+  needsDraw = true;
+  lastBusy = performance.now();
+}
+
 const viewAspect = () => innerWidth / innerHeight;
 let sim = new Sim(g, viewAspect(), quality);
 let studio = new Studio(sim);
@@ -81,6 +92,7 @@ function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.round(w * dpr);
   canvas.height = Math.round(h * dpr);
+  wake();
 }
 addEventListener('resize', resize);
 resize();
@@ -154,6 +166,7 @@ let lastTap = { t: 0, x: 0, y: 0 };
 const manualTilt = { x: 0, y: 0 };
 
 canvas.addEventListener('pointerdown', e => {
+  wake();
   if (drag) return;
   demo.stop();
   try {
@@ -268,6 +281,7 @@ for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) torchBtn.
 torchBtn.addEventListener('contextmenu', e => e.preventDefault());
 
 levelBtn.addEventListener('click', () => {
+  wake();
   tilt.level();
   navigator.vibrate?.(10);
   hint('Level: this pose is flat now');
@@ -305,6 +319,7 @@ demo.onChange = onDemoChange;
 // keyboard (desktop): 1–6 paints, arrows tilt, L lift
 const keysTilt: Record<string, boolean> = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, ArrowDown: false };
 addEventListener('keydown', e => {
+  wake();
   if (e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
   const n = +e.key;
   if (n >= 1 && n <= PAINT_ORDER.length) selectPaint(PAINT_ORDER[n - 1], true);
@@ -423,8 +438,17 @@ function frame(now: number) {
     }
   }
 
-  const forces = studio.update(dt);
-  sim.step(dt, forces);
+  // Idle: when nothing moves, the paint stops (yield stress). Then skip the
+  // simulation and draw only when the view changes. Saves GPU and battery.
+  const busy =
+    demo.active || !!drag || !!studio.pour || !!studio.push || studio.torch || !!studio.cup ||
+    Math.hypot(t.tx, t.ty) > 0 || Math.hypot(t.x, t.y) > 1e-3;
+  if (busy) lastBusy = now;
+  const simulate = (busy || studio.dirty) && now - lastBusy < SETTLE_MS;
+  if (simulate) {
+    const forces = studio.update(dt);
+    sim.step(dt, forces);
+  } else if (Math.hypot(t.tx - t.x, t.ty - t.y) > 0) studio.update(dt);
 
   if (tilt.mode === 'sensor' && !demo.tilting) {
     view = [tilt.value.x, tilt.value.y];
@@ -434,7 +458,12 @@ function frame(now: number) {
     const s = 1 - 0.12 * Math.min(1, Math.hypot(t.x, t.y) / P.tiltMax);
     canvas.style.transform = `scale(${s}) rotateX(${t.y * 22}deg) rotateY(${t.x * 22}deg)`;
   }
-  sim.render(studio.overlay(view), canvas.width, canvas.height);
+  const viewMoved = Math.hypot(view[0] - lastView[0], view[1] - lastView[1]) > 0.003;
+  if (simulate || viewMoved || saveRequested || needsDraw) {
+    sim.render(studio.overlay(view), canvas.width, canvas.height);
+    lastView = view;
+    needsDraw = false;
+  }
   if (saveRequested) {
     saveRequested = false;
     saveImage();
