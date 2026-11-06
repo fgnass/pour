@@ -292,6 +292,7 @@ export class Sim {
     gl.uniform1f(p.uni.uDt, dt);
     gl.uniform1f(p.uni.uK, P.surfK);
     gl.uniform1f(p.uni.uTime, this.time);
+    gl.uniform4f(p.uni.uTorch, ...f.torch);
     g.draw(this.GTfb[1 - this.gi], GW, GH);
     this.gi = 1 - this.gi;
 

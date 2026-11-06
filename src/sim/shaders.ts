@@ -138,13 +138,23 @@ void finish(vec4 c, float gold, out float irid, out vec3 sheen, out float metal,
 }
 `;
 
+// Torch: the hot surface flows away from the flame (Marangoni flow), in
+// domain units / s. Shared by the surface pigments and the glitter.
+const TORCH_FLOW = `
+uniform vec4 uTorch; // x, y, radius, strength
+vec2 marangoni(vec2 p) {
+  vec2 td = p - uTorch.xy;
+  float tr = max(uTorch.z, 1e-4);
+  return 0.02 * uTorch.w * td / tr * exp(-dot(td, td) / (tr * tr) * 1.5);
+}
+`;
+
 // Pigment advection. S: surface colours, U: submerged colours,
 // G: gold (x surface, y submerged).
-export const PIG_FS = COMMON + HASH + `
+export const PIG_FS = COMMON + HASH + TORCH_FLOW + `
 uniform sampler2D uS, uU, uG, uV, uMask;
 uniform vec2 uSize, uDom;
 uniform float uDt, uSurfK, uSubK, uRise, uSharpen, uTime;
-uniform vec4 uTorch; // x, y, radius, strength: heat makes paint rise faster
 uniform vec4 uSrc[${NUM_SRC}];
 uniform vec4 uSrcS[${NUM_SRC}];
 uniform vec4 uSrcU[${NUM_SRC}];
@@ -192,11 +202,7 @@ void main() {
   vec2 p = x * uDom;
   vec2 v1 = texture(uV, x).xy / uDom;
   vec2 v2 = texture(uV, x - 0.5 * uDt * uSurfK * v1).xy / uDom;
-  // torch: the hot surface flows away from the flame (Marangoni flow)
-  vec2 td = p - uTorch.xy;
-  float tr = max(uTorch.z, 1e-4);
-  vec2 mar = 0.02 * uTorch.w * td / tr * exp(-dot(td, td) / (tr * tr) * 1.5);
-  vec2 xs = x - uDt * (uSurfK * v2 + mar / uDom);
+  vec2 xs = x - uDt * (uSurfK * v2 + marangoni(p) / uDom);
   vec2 xu = x - uDt * uSubK * v2;
 
   vec4 S = sharpen(uS, xs, cr(uS, xs));
@@ -230,6 +236,8 @@ void main() {
 
   // submerged paint rises back to the surface inside cells
   float m = texture(uMask, x).r;
+  vec2 td = p - uTorch.xy;
+  float tr = max(uTorch.z, 1e-4);
   float heat = uTorch.w * exp(-dot(td, td) / (tr * tr) * 2.0);
   float t = 1.0 - exp(-uRise * (1.0 + heat) * m * uDt);
   S += t * U; U -= t * U;
@@ -440,16 +448,17 @@ void main() { o0 = vec4(0.0); o1 = vec4(0.0); o2 = vec4(0.0); }`;
 // Glitter flakes: particles (x, y, birth, life) that ride on the surface of
 // the paint. They are respawned at random places when their life ends, so the
 // glitter stays evenly spread while the paint stretches.
-export const GLIT_FS = COMMON + HASH + `
+export const GLIT_FS = COMMON + HASH + TORCH_FLOW + `
 uniform sampler2D uP, uV;
 uniform vec2 uDom;
 uniform float uDt, uK, uTime;
 out vec4 o;
 void main() {
   vec4 q = texelFetch(uP, ivec2(gl_FragCoord.xy), 0);
-  vec2 v1 = texture(uV, q.xy / uDom).xy;
-  vec2 v2 = texture(uV, (q.xy + 0.5 * uDt * uK * v1) / uDom).xy;
-  q.xy += uDt * uK * v2;
+  // same surface velocity as the surface pigments (PIG_FS), torch included
+  vec2 v1 = uK * texture(uV, q.xy / uDom).xy + marangoni(q.xy);
+  vec2 m = q.xy + 0.5 * uDt * v1;
+  q.xy += uDt * (uK * texture(uV, m / uDom).xy + marangoni(m));
   bool out_ = q.x < 0.0 || q.y < 0.0 || q.x > uDom.x || q.y > uDom.y;
   if (q.w <= 0.0 || out_ || uTime > q.z + q.w) {
     vec3 r = hash3(gl_FragCoord.xy, floor(uTime * 97.0) + 17.0);
