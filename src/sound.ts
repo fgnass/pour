@@ -2,6 +2,8 @@
 // - torch: synthesised gas burner. Quiet while the Torch tool is on, louder
 //   while the flame points at the canvas.
 // - pour: a recording of pouring oil, played slower so it sounds thick.
+//   Onto the canvas it is muffled and flat; into the cup it rings hollow.
+// - cup: dragging the cup through the paint squelches, lower than a swipe.
 // - swipe: single squelches cut from a recording of slippery jelly; the
 //   faster the finger, the more of them.
 // - lift: a short burst of the pour recording.
@@ -9,8 +11,10 @@
 // "Guck, Slime, slippery Jelly" by breiti.
 import swipeEvents from './swipe-events.json';
 
-const POUR_RATE = 0.65;
+const POUR_RATE = 0.55; // onto the canvas
+const CUP_POUR_RATE = 0.62; // into the cup
 const SWIPE_RATE = 0.7;
+const CUP_DRAG_RATE = 0.5;
 
 export type SoundState = {
   torchTool: boolean;
@@ -19,6 +23,8 @@ export type SoundState = {
   intoCup: boolean;
   /** speed of the swiping finger (domain units / s), 0 when not swiping */
   swipe: number;
+  /** speed of the cup while it is dragged (domain units / s) */
+  cupDrag: number;
 };
 
 const rnd = (a: number, b: number) => a + Math.random() * (b - a);
@@ -40,6 +46,11 @@ export class Sound {
   private swipeBuf: AudioBuffer | null = null;
   private pourSrc: { s: AudioBufferSourceNode; g: GainNode } | null = null;
   private nextSquelch = 0;
+  private nextCupSquelch = 0;
+  // pour goes through two paths: muffled (canvas) and hollow (cup)
+  private pourIn!: GainNode;
+  private canvasPath!: GainNode;
+  private cupPath!: GainNode;
 
   /** Call from a user gesture: browsers only start audio after one. */
   unlock() {
@@ -112,6 +123,35 @@ export class Sound {
     this.hissGain.gain.value = 0.12;
     this.loop(1.1).connect(hissBP).connect(this.hissGain).connect(this.torchGain);
 
+    // pour paths. Canvas: thick paint lands on a flat surface, muffled.
+    this.pourIn = ctx.createGain();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 650;
+    lp.Q.value = 0.5;
+    this.canvasPath = ctx.createGain();
+    this.pourIn.connect(lp).connect(this.canvasPath).connect(this.master);
+    // Cup: the paint falls into a small cavity; a resonance and a short
+    // feedback delay make it ring hollow.
+    const res = ctx.createBiquadFilter();
+    res.type = 'peaking';
+    res.frequency.value = 850;
+    res.Q.value = 3;
+    res.gain.value = 9;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 180;
+    const dl = ctx.createDelay(0.05);
+    dl.delayTime.value = 0.0016;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.45;
+    this.cupPath = ctx.createGain();
+    this.cupPath.gain.value = 0;
+    this.pourIn.connect(hp).connect(res).connect(this.cupPath);
+    res.connect(dl).connect(fb).connect(dl);
+    fb.connect(this.cupPath);
+    this.cupPath.connect(this.master);
+
     this.loadSamples();
   }
 
@@ -143,7 +183,7 @@ export class Sound {
     const g = ctx.createGain();
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.4, t + 0.08);
-    s.connect(g).connect(this.master);
+    s.connect(g).connect(this.pourIn);
     s.start(t, Math.random() * this.pourBuf!.duration);
     this.pourSrc = { s, g };
   }
@@ -158,10 +198,10 @@ export class Sound {
   }
 
   /** One squelch from the jelly recording. Returns its length in seconds. */
-  private squelch(t: number, gain: number) {
+  private squelch(t: number, gain: number, rateK = SWIPE_RATE) {
     const ctx = this.ctx!;
     const [start, len] = swipeEvents[(Math.random() * swipeEvents.length) | 0];
-    const rate = SWIPE_RATE * rnd(0.9, 1.1);
+    const rate = rateK * rnd(0.9, 1.1);
     const L = Math.max(0.06, len) / rate;
     const s = ctx.createBufferSource();
     s.buffer = this.swipeBuf!;
@@ -239,8 +279,9 @@ export class Sound {
     if (this.pourBuf) {
       if (s.pouring && !this.pourSrc) this.startPour(t);
       else if (!s.pouring && this.pourSrc) this.stopPour(t);
-      // into the cup the stream falls a shorter way: a bit higher
-      this.pourSrc?.s.playbackRate.setTargetAtTime(POUR_RATE * (s.intoCup ? 1.12 : 1), t, 0.1);
+      this.pourSrc?.s.playbackRate.setTargetAtTime(s.intoCup ? CUP_POUR_RATE : POUR_RATE, t, 0.1);
+      this.canvasPath.gain.setTargetAtTime(s.intoCup ? 0 : 1.3, t, 0.06);
+      this.cupPath.gain.setTargetAtTime(s.intoCup ? 0.8 : 0, t, 0.06);
     }
 
     // swipe: squelches, more and louder the faster the finger moves
@@ -248,6 +289,13 @@ export class Sound {
     if (this.swipeBuf && k > 0.05 && t >= this.nextSquelch) {
       const L = this.squelch(t + 0.005, 0.6 * (0.4 + 0.6 * k));
       this.nextSquelch = t + Math.max(0.03, L * 0.5) / k;
+    }
+
+    // dragging the cup: slower, deeper squelches
+    const c = Math.min(1, s.cupDrag / 0.4);
+    if (this.swipeBuf && c > 0.08 && t >= this.nextCupSquelch) {
+      const L = this.squelch(t + 0.005, 0.5 * (0.4 + 0.6 * c), CUP_DRAG_RATE);
+      this.nextCupSquelch = t + Math.max(0.05, L * 0.6) / c;
     }
   }
 }
