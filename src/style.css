@@ -371,13 +371,16 @@ svg {
   color: transparent;
 }
 .start h1.logo {
-  margin: -6px 0 10px;
+  /* banner of poured paint, edge to edge at the top of the panel */
+  margin: -26px -22px 18px;
   background: none;
-  text-align: center;
   line-height: 0;
+  overflow: hidden;
+  border-radius: 25px 25px 0 0;
 }
 .start h1.logo img {
-  width: 150px;
+  display: block;
+  width: 100%;
   height: auto;
 }
 .lead {

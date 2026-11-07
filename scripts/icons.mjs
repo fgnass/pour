@@ -1,15 +1,21 @@
-// Render the app icons from the SVG sources. Run: npm run icons
-//   public/favicon.svg -> favicon.ico, pwa-*.png, apple-touch-icon (full bleed)
-//   icons/maskable.svg -> maskable icon (logo inside the 80 % safe circle)
+// Render the app icons from the source images. Run: npm run icons
+//   icons/icon.jpg     -> favicon.ico, pwa-*.png, apple-touch-icon (full bleed)
+//   icons/maskable.jpg -> maskable icon (P inside the 80 % safe circle)
+//   icons/banner.jpg   -> start.jpg, the banner of the start dialog (smaller P, wide crop)
+// All are crops of a P poured with the app itself (white over the demo).
 import sharp from 'sharp';
 import { writeFile } from 'node:fs/promises';
 
-const ANY = 'public/favicon.svg';
-const MASKABLE = 'icons/maskable.svg';
+const ANY = 'icons/icon.jpg';
+const MASKABLE = 'icons/maskable.jpg';
+const BANNER = 'icons/banner.jpg';
 
 async function png(src, size) {
-  // render at a high density first, so small sizes stay sharp
-  return sharp(src, { density: 300 }).resize(size, size).png().toBuffer();
+  return sharp(src).resize(size, size, { kernel: 'lanczos3' }).png({ palette: true, quality: 95, effort: 10 }).toBuffer();
+}
+
+async function jpg(src) {
+  return sharp(src).jpeg({ quality: 80, mozjpeg: true }).toBuffer();
 }
 
 /** ICO file with embedded PNG images */
@@ -38,6 +44,7 @@ const out = {
   'public/pwa-512x512.png': await png(ANY, 512),
   'public/apple-touch-icon-180x180.png': await png(ANY, 180),
   'public/maskable-icon-512x512.png': await png(MASKABLE, 512),
+  'public/start.jpg': await jpg(BANNER),
   'public/favicon.ico': ico([
     { size: 32, data: await png(ANY, 32) },
     { size: 48, data: await png(ANY, 48) },

@@ -103,6 +103,8 @@ try {
 let studio = new Studio(sim);
 let demo = new Demo(studio);
 const tilt = new TiltInput();
+// dev only: script the studio from the console (used to make the app icon)
+if (import.meta.env.DEV) Object.assign(window, { dev: { studio: () => studio, demo: () => demo, sim: () => sim, palettes: PALETTES, palette: (i: number) => usePalette(i), wake: () => wake() } });
 
 function rebuild() {
   demo.stop();
