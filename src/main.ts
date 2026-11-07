@@ -89,7 +89,12 @@ const soundBtn = $<HTMLButtonElement>('[data-act="sound"]');
 const syncSoundBtn = () => (soundBtn.textContent = sound.enabled ? 'Sound: on' : 'Sound: off');
 syncSoundBtn();
 
-const viewAspect = () => innerWidth / innerHeight;
+/** aspect of the view; a just installed PWA can start with a zero size, then use the screen */
+const viewAspect = () => {
+  const a = innerWidth / innerHeight;
+  const s = screen.width / screen.height;
+  return Math.min(4, Math.max(0.25, a > 0 && isFinite(a) ? a : s > 0 && isFinite(s) ? s : 9 / 16));
+};
 boot('compile');
 let sim: Sim;
 try {
@@ -97,7 +102,8 @@ try {
 } catch (e) {
   // a shader this GPU does not accept: say so instead of hanging
   boot(null);
-  showError('Your browser could not set up the paint simulation. ' + (e as Error).message.split('\n')[0]);
+  const info = `(view ${innerWidth}×${innerHeight}, aspect ${viewAspect().toFixed(3)}, n ${quality.n}, np ${quality.np}${quality.glitter ? ', glitter' : ''})`;
+  showError('Your browser could not set up the paint simulation. ' + (e as Error).message.split('\n')[0] + ' ' + info);
   throw e;
 }
 let studio = new Studio(sim);
@@ -121,6 +127,8 @@ const layout = { left: 0, top: 0, w: 1, h: 1 };
 function resize() {
   const W = innerWidth,
     H = innerHeight;
+  // no size yet (e.g. the first start of an installed PWA): wait for the next resize
+  if (!W || !H) return;
   const a = sim.dom[0] / sim.dom[1];
   if (!studio.dirty && Math.abs(Math.log(a / (W / H))) > 0.03) {
     rebuild();
