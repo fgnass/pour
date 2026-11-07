@@ -70,6 +70,8 @@ export class Studio {
   dirty = false;
   private spawnAcc: Record<string, number> = {};
   private stream: Overlay['stream'] = null;
+  /** where the swipe was at the last step */
+  private pushFrom: { x: number; y: number } | null = null;
   /** where the falling stream lands: it trails the hand a little */
   private land: { x: number; y: number } | null = null;
   private swirl: Forces['swirl'] = [0, 0, 0, 0];
@@ -83,6 +85,7 @@ export class Studio {
     this.torch = null;
     this.dirty = false;
     this.land = null;
+    this.pushFrom = null;
     this.sim.reset();
   }
 
@@ -297,13 +300,21 @@ export class Studio {
     const tq = this.torch;
     if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR, [0.6, 0.8], 1.7);
 
+    // a quick swipe pushes the paint along the whole way since the last step
+    const pushFrom: Forces['pushFrom'] = [
+      [push[0][0], push[0][1]],
+      [0, 0],
+    ];
     if (this.push) {
       const p = this.push;
+      const from = this.pushFrom ?? p;
       push[1] = [p.x, p.y, p.r, 1.0];
       pushVel[1] = clampVel(p.vx, p.vy);
-    }
+      pushFrom[1] = [from.x, from.y];
+      this.pushFrom = { x: p.x, y: p.y };
+    } else this.pushFrom = null;
 
-    return { tilt: [t.x, t.y], push, pushVel, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, M.torchHeat] : [0, 0, 1, 0] };
+    return { tilt: [t.x, t.y], push, pushVel, pushFrom, swirl: this.swirl, src, torch: tq ? [tq.x, tq.y, M.torchR, M.torchHeat] : [0, 0, 1, 0] };
   }
 
   /**

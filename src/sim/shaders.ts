@@ -28,11 +28,18 @@ float swept(vec2 p, vec2 a, vec2 b, float r) {
 const FORCES = `
 uniform vec2 uTilt;
 uniform vec4 uPush[2];     // x, y, radius, strength
+uniform vec2 uPushA[2];    // where the pusher was one step ago (it sweeps from there)
 uniform vec2 uPushVel[2];
 uniform vec4 uSwirl;       // x, y, radius, omega
+// 1 inside the band swept by a disc of radius r moving from a to b
+float band(vec2 p, vec2 a, vec2 b, float r) {
+  vec2 ab = b - a;
+  float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+  return 1.0 - smoothstep(0.7 * r, r, length(p - a - ab * t));
+}
 vec2 imposedVel(vec2 p) {
   vec2 v = vec2(0.0);
-  for (int i = 0; i < 2; i++) v += uPushVel[i] * uPush[i].w * disc(p, uPush[i].xy, uPush[i].z);
+  for (int i = 0; i < 2; i++) v += uPushVel[i] * uPush[i].w * band(p, uPushA[i], uPush[i].xy, uPush[i].z);
   vec2 d = p - uSwirl.xy;
   v += uSwirl.w * vec2(-d.y, d.x) * disc(p, uSwirl.xy, uSwirl.z);
   return v;

@@ -36,6 +36,8 @@ export type Forces = {
   tilt: [number, number];
   push: [number, number, number, number][]; // 2 entries: x, y, radius, strength
   pushVel: [number, number][];
+  /** where each pusher was one step ago; the force covers the swept band */
+  pushFrom?: [number, number][];
   swirl: [number, number, number, number];
   src: Source[]; // NUM_SRC entries
   /** x, y, radius, strength */
@@ -231,6 +233,7 @@ export class Sim {
     gl.uniform2f(p.uni.uTilt, f.tilt[0], f.tilt[1]);
     gl.uniform4fv(p.uni.uPush, f.push.flat());
     gl.uniform2fv(p.uni.uPushVel, f.pushVel.flat());
+    gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
   }
   private setSources(p: Program, src: Source[]) {
