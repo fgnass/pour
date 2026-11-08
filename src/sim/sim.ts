@@ -86,6 +86,9 @@ export class Sim {
 
   private H: WebGLTexture[];
   private Hfb: WebGLFramebuffer[];
+  /** copy of the thickness before a step */
+  private H0: WebGLTexture;
+  private H0fb: WebGLFramebuffer;
   private V: WebGLTexture;
   private Vfb: WebGLFramebuffer;
   private PS: WebGLTexture[][];
@@ -134,6 +137,8 @@ export class Sim {
     const PIG = gl.RGBA16F;
     this.H = [0, 1].map(() => tex(this.NX, this.NY, gl.R32F, false));
     this.Hfb = this.H.map(t => fbo([t]));
+    this.H0 = tex(this.NX, this.NY, gl.R32F, false);
+    this.H0fb = fbo([this.H0]);
     this.V = tex(this.NX, this.NY, gl.RGBA16F, true);
     this.Vfb = fbo([this.V]);
     this.PS = [0, 1].map(() => [0, 1, 2].map(() => tex(this.PX, this.PY, PIG, true)));
@@ -236,9 +241,11 @@ export class Sim {
     gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
   }
-  private setSources(p: Program, src: Source[]) {
-    this.g.gl.uniform4fv(p.uni.uSrc, src.flatMap(s => [s.x, s.y, s.r, s.rate]));
-    this.g.gl.uniform2fv(p.uni.uSrcA, src.flatMap(s => [s.x0 ?? s.x, s.y0 ?? s.y]));
+  /** sources that sweep from (x0, y0) to (x, y) in a step; t0..t1: the part of the sweep to use */
+  private setSources(p: Program, src: Source[], t0 = 0, t1 = 1) {
+    const at = (s: Source, t: number) => [(s.x0 ?? s.x) + (s.x - (s.x0 ?? s.x)) * t, (s.y0 ?? s.y) + (s.y - (s.y0 ?? s.y)) * t];
+    this.g.gl.uniform4fv(p.uni.uSrc, src.flatMap(s => [...at(s, t1), s.r, s.rate]));
+    this.g.gl.uniform2fv(p.uni.uSrcA, src.flatMap(s => at(s, t0)));
   }
   private setFilm(p: Program) {
     const gl = this.g.gl;
@@ -258,14 +265,21 @@ export class Sim {
     this.substeps = n;
     const sdt = dt / n;
 
+    // keep the thickness before the step (the pigments need it)
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this.Hfb[this.hi]);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.H0fb);
+    gl.blitFramebuffer(0, 0, this.NX, this.NY, 0, 0, this.NX, this.NY, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+
     // paint thickness
     let p = this.prog.flux;
     gl.useProgram(p.prog);
     this.setFilm(p);
     gl.uniform1f(p.uni.uDt, sdt);
     this.setForces(p, f);
-    this.setSources(p, f.src);
     for (let i = 0; i < n; i++) {
+      // each substep gets its part of the sweep: the stream lays paint where it is at that time
+      this.setSources(p, f.src, i / n, (i + 1) / n);
       g.bindTex(p, 'uH', 0, this.H[this.hi]);
       g.draw(this.Hfb[1 - this.hi], this.NX, this.NY);
       this.hi = 1 - this.hi;
@@ -276,6 +290,7 @@ export class Sim {
     this.setFilm(p);
     this.setForces(p, f);
     g.bindTex(p, 'uH', 0, this.H[this.hi]);
+    g.bindTex(p, 'uH0', 1, this.H0);
     g.draw(this.Vfb, this.NX, this.NY);
 
     // cell particles: spawn, move, splat into the rise mask

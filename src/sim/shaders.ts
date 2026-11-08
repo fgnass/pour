@@ -105,6 +105,7 @@ void main() {
 // Mean film velocity (xy) and thickness (z, for linear sampling).
 export const VEL_FS = COMMON + FORCES + H_AT + `
 uniform float uDx, uA, uK, uTau, uCap;
+uniform sampler2D uH0; // thickness before this step
 out vec4 o;
 void main() {
   ivec2 c = ivec2(gl_FragCoord.xy);
@@ -123,7 +124,7 @@ void main() {
   vec2 u = uA * hc * hc * hc / max(hm, 1e-3) * F * y + imposedVel(p) * step(0.02, hm);
   float m = length(u);
   if (m > 1.5) u *= 1.5 / m;
-  o = vec4(u, h, 1.0);
+  o = vec4(u, h, texelFetch(uH0, c, 0).r);
 }`;
 
 const HASH = `
@@ -240,6 +241,7 @@ void main() {
   // holds this step's new paint: take it out, so fresh paint on a bare spot
   // shows its full colour.
   float h = texture(uV, x).z;
+  float h0 = texture(uV, x).w;
   for (int i = 0; i < ${NUM_SRC}; i++) {
     float r = uSrc[i].z;
     if (r > 0.0) h -= uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r) * uDt;
@@ -249,7 +251,10 @@ void main() {
     float r = uSrc[i].z;
     if (r <= 0.0) continue;
     float dh = uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r) * uDt;
-    float fr = dh / (h + dh + 1e-4);
+    // share of the new paint, against the paint that was here before this
+    // step: new paint that ran sideways during the step must not count as
+    // old paint, or the edge of a fast line shows one arc per frame
+    float fr = dh / (min(h, h0) + dh + 1e-4);
     // plug flow (a lifted cup): the new paint fills the core and pushes the
     // older paint outwards, so consecutive colours form rings
     fr = mix(fr, 1.0 - smoothstep(0.55 * r, 0.7 * r, length(p - uSrc[i].xy)), uSrcPlug[i]);

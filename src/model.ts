@@ -10,6 +10,15 @@ export const M = {
   whiteRate: 0.14,
   whiteR: 0.045,
   colorR: 0.03,
+  // A moving stream lays Q / v of paint per length: a fast hand gives a thin
+  // line, a slow hand a thick one. Above this speed the line gets narrower
+  // (width and height both scale with the square root of Q / v) ...
+  streamV: 0.25,
+  // ... down to this fraction of the stream radius
+  streamMin: 0.35,
+  // thick paint starts to flow slowly: a pour on the canvas starts as a thin
+  // thread and is a full stream after about this time (seconds, time constant)
+  pourRamp: 0.25,
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
   torchR: 0.09, // radius of the torch flame
@@ -74,6 +83,15 @@ export class Studio {
   private pushFrom: { x: number; y: number } | null = null;
   /** where the falling stream lands: it trails the hand a little */
   private land: { x: number; y: number } | null = null;
+  /** first smoothing stage between the hand and the landing point */
+  private landMid = { x: 0, y: 0 };
+  /** recent landing points (t, x, y), to measure the speed over a short window */
+  private landPath: number[][] = [];
+  private landT = 0;
+  /** smoothed speed of the landing point */
+  private landV = 0;
+  /** 0..1: how far the current pour stream has built up */
+  private flow = 0;
   private swirl: Forces['swirl'] = [0, 0, 0, 0];
 
   constructor(readonly sim: Sim) {}
@@ -204,7 +222,9 @@ export class Studio {
     // pouring: into the cup, or straight onto the canvas
     const pour = this.pour;
     if (!pour) this.land = null;
+    this.flow = pour ? this.flow + (1 - this.flow) * (1 - Math.exp(-dt / M.pourRamp)) : 0;
     if (pour) {
+      const flow = this.flow;
       const cup = this.cup;
       if (cup && this.hitsCup(pour.x, pour.y, 1.15)) {
         // where the stream lands in the cup (kept inside the cup)
@@ -222,22 +242,43 @@ export class Studio {
       } else {
         const white = pour.m === 0;
         // the stream has some inertia: it follows the hand with a short lag
-        // and lays down a continuous line between frames
+        // and lays down a continuous line between frames. Two smoothing
+        // stages, so it moves evenly also when touch events come unevenly
+        // (with one stage it jumps after each event: lumps in the line).
+        if (!this.land) {
+          this.landMid = { x: pour.x, y: pour.y };
+          this.landV = 0;
+          this.landPath = [];
+        }
         const prev = this.land ?? { x: pour.x, y: pour.y };
-        const f = 1 - Math.exp(-dt * 22);
-        const land = { x: prev.x + (pour.x - prev.x) * f, y: prev.y + (pour.y - prev.y) * f };
+        const mid = this.landMid;
+        const f = 1 - Math.exp(-dt * 35);
+        mid.x += (pour.x - mid.x) * f;
+        mid.y += (pour.y - mid.y) * f;
+        const land = { x: prev.x + (mid.x - prev.x) * f, y: prev.y + (mid.y - prev.y) * f };
         this.land = land;
+        // speed over the last 0.12 s: touch events do not come every frame, and
+        // a speed per frame would make the line wider and narrower in steps
+        const path = this.landPath;
+        path.push([(this.landT += dt), land.x, land.y]);
+        while (path.length > 2 && this.landT - path[1][0] >= 0.12) path.shift();
+        const [t0, x0, y0] = path[0];
+        const v = this.landT > t0 ? Math.hypot(land.x - x0, land.y - y0) / (this.landT - t0) : 0;
+        this.landV += (v - this.landV) * (1 - Math.exp(-dt * 10));
+        // cross-section of the line: flow / speed (and the stream itself while it builds up)
+        const thin = Math.max(M.streamMin, Math.sqrt(flow * Math.min(1, M.streamV / Math.max(this.landV, 1e-6))));
+        const r = (white ? M.whiteR : M.colorR) * thin;
         src[si++] = {
           x: land.x,
           y: land.y,
           x0: prev.x,
           y0: prev.y,
-          r: white ? M.whiteR : M.colorR,
-          rate: white ? M.whiteRate : M.pourRate,
+          r,
+          rate: (white ? M.whiteRate : M.pourRate) * flow,
           streak: 0,
           ...splitComp(oneHot(pour.m), white ? 0 : 0.55),
         };
-        if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * 0.55, land.x, land.y, 0, M.colorR, [1.5, 3], 1, prev);
+        if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * flow * 0.55, land.x, land.y, 0, r, [1.5, 3], 1, prev);
         this.stream = { x: land.x, y: land.y, col: MATS[pour.m].rgb };
         this.dirty = true;
       }
