@@ -296,9 +296,16 @@ void main() {
     vec2 gs = vec2(srcG.x * st, srcG.y);
     vec4 su = srcU + srcS - ss;
     gs.y += srcG.x - gs.x;
-    S = mix(S, ss, fr);
-    U = mix(U, max(su, 0.0), fr);
-    G.xy = mix(G.xy, max(gs, 0.0), fr);
+    // New paint lies on top of the wet paint: its colour covers the surface
+    // fast, and the surface colour it covers goes under (the cells and the
+    // torch can bring it up again). The amount of each pigment stays the same.
+    float cov = min(1.0, fr * (1.0 + 2.0 * fr));
+    vec4 T = mix(S + U, ss + max(su, 0.0), fr);
+    vec2 TG = vec2(mix(G.x + G.y, gs.x + max(gs.y, 0.0), fr));
+    S = mix(S, ss, cov);
+    U = max(T - S, 0.0);
+    G.x = mix(G.x, gs.x, cov);
+    G.y = max(TG.x - G.x, 0.0);
     h += dh;
   }
 

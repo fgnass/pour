@@ -273,7 +273,7 @@ function toolHint() {
     case 'swipe':
       return 'Drag through wet paint to push it';
     case 'torch':
-      return 'Move the flame over the paint to make cells';
+      return 'Move the flame over the paint: cells bring up the colours below';
     case 'none':
       return 'Pick a tool';
     case 'tilt':
