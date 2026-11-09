@@ -85,9 +85,19 @@ export class Sound {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -14;
     comp.ratio.value = 4;
+    // make-up gain after the compressor, then a limiter so loud moments
+    // (pour + swipe at once) do not clip
+    const makeup = ctx.createGain();
+    makeup.gain.value = 1.6;
+    const limit = ctx.createDynamicsCompressor();
+    limit.threshold.value = -2;
+    limit.knee.value = 0;
+    limit.ratio.value = 20;
+    limit.attack.value = 0.002;
+    limit.release.value = 0.1;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.6;
-    this.master.connect(comp).connect(ctx.destination);
+    this.master.gain.value = 1.5;
+    this.master.connect(comp).connect(makeup).connect(limit).connect(ctx.destination);
 
     // 3 s of pink-ish noise, looped
     const len = ctx.sampleRate * 3;
