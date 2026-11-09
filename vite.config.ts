@@ -24,7 +24,8 @@ export default defineConfig({
           { src: 'maskable-icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,jpg,ico,webmanifest,mp3}'] },
+      // screenshots/ is for gnass.buzz and link previews, not for the app
+      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,jpg,ico,webmanifest,mp3}'], globIgnores: ['screenshots/**'] },
     }),
   ],
 });
