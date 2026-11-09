@@ -265,10 +265,10 @@ function toolHint() {
   switch (tool) {
     case 'pour':
       return studio.cup && !studio.cup.lifting
-        ? 'Hold to pour into the cup · drag the cup to move it'
+        ? 'Hold to pour into the cup · drag to move it · flick it away to lift'
         : `Hold to pour ${MATS[paint].name.toLowerCase()}`;
     case 'cup':
-      if (studio.cup?.lifting) return 'Lifting the cup …';
+      if (studio.cup?.lifting) return 'Drag to lead the cup while the paint runs out';
       return 'Tap to set the cup into the paint';
     case 'swipe':
       return 'Drag through wet paint to push it';
@@ -366,7 +366,13 @@ canvas.addEventListener('pointerdown', e => {
   const p = toDomain(e);
   drag = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now(), vx: 0, vy: 0, cx: 0, cy: 0, moved: false, onCup: false };
   const cup = studio.cup;
-  if (cup && tool !== 'tilt' && studio.hitsCup(p.x, p.y, 1.3)) {
+  if (cup?.lifting && tool !== 'tilt') {
+    // a lifted cup hangs at the finger: drag anywhere to lead it
+    drag.onCup = true;
+    drag.cx = cup.tx;
+    drag.cy = cup.ty;
+    cup.mvx = cup.mvy = 0;
+  } else if (cup && tool !== 'tilt' && studio.hitsCup(p.x, p.y, 1.3)) {
     drag.onCup = true;
     drag.cx = cup.tx;
     drag.cy = cup.ty;
@@ -404,8 +410,8 @@ canvas.addEventListener('pointermove', e => {
   if (Math.hypot(p.x - drag.sx, p.y - drag.sy) * (layout.w / sim.dom[0]) > 10) drag.moved = true;
   if (drag.onCup) {
     const cup = studio.cup;
-    if (!cup || cup.lifting) return;
-    if (drag.moved) {
+    if (!cup) return;
+    if (drag.moved || cup.lifting) {
       // dragging moves the cup; pouring stops while it moves
       if (studio.pour) {
         studio.pour = null;
@@ -438,6 +444,9 @@ canvas.addEventListener('pointermove', e => {
   }
 });
 
+/** release speed (domain units / s) above which a dragged cup is lifted */
+const FLICK = 1.2;
+
 function endDrag(e: PointerEvent) {
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag;
@@ -449,6 +458,22 @@ function endDrag(e: PointerEvent) {
   if (tool === 'tilt') {
     manualTilt.x = manualTilt.y = 0;
     if (tilt.mode === 'sensor' && !d.moved) levelNow();
+  }
+  const cup = studio.cup;
+  if (d.onCup && cup) {
+    // let go while moving: the motion goes on. A cup on the canvas flicked
+    // away fast is lifted on the way, like sliding it off and up.
+    const fresh = performance.now() - d.t < 80;
+    const vx = fresh ? d.vx : 0,
+      vy = fresh ? d.vy : 0;
+    const v = Math.hypot(vx, vy);
+    if (cup.lifting) studio.liftCup(vx * 0.7, vy * 0.7);
+    else if (d.moved && v > FLICK) {
+      demo.stop();
+      studio.liftCup(vx * 0.7, vy * 0.7);
+      navigator.vibrate?.([8, 40, 8]);
+      return;
+    }
   }
   if (tool === 'cup' && d.onCup && studio.cup && !studio.cup.lifting) {
     // freshly placed: next step is pouring into it
@@ -470,6 +495,7 @@ function lift() {
   demo.stop();
   studio.liftCup();
   navigator.vibrate?.([8, 40, 8]);
+  hint('Drag to lead the cup while the paint runs out');
 }
 
 // install

@@ -56,6 +56,8 @@ float hAt(ivec2 c) {
 `;
 
 export const NUM_SRC = 3;
+/** colour bands of a lifted cup (source 0), see PIG_FS */
+export const NUM_BANDS = 10;
 
 // Thin film flow: q = A h^3 (tilt - K grad h), with a yield stress.
 export const FLUX_FS = COMMON + FORCES + H_AT + `
@@ -189,6 +191,17 @@ uniform vec4 uSrcU[${NUM_SRC}];
 uniform vec2 uSrcG[${NUM_SRC}];
 uniform float uSrcStreak[${NUM_SRC}];
 uniform float uSrcPlug[${NUM_SRC}];
+// A lifted cup (source 0) lets out its whole cross-section at once: the
+// pours lie in rings in the cup, so the paint comes out in bands by distance
+// from the path of the cup. Standing still that gives rings; moving, stripes
+// along the path. Oldest (outermost) band first; uBandR is the outer radius
+// of each band as a fraction of the source radius.
+uniform int uBandN;
+uniform vec3 uBandDir; // direction the cup moves in (x, y), how much it moves (0..1)
+uniform float uBandR[${NUM_BANDS}];
+uniform vec4 uBandS[${NUM_BANDS}];
+uniform vec4 uBandU[${NUM_BANDS}];
+uniform vec2 uBandG[${NUM_BANDS}];
 layout(location = 0) out vec4 oS;
 layout(location = 1) out vec4 oU;
 layout(location = 2) out vec4 oG;
@@ -263,10 +276,26 @@ void main() {
     float a = atan(d.y, d.x) / 6.2831853 * 46.0 + uTime * 0.7;
     float n = mix(hash3(vec2(floor(a), 0.0), 11.0).x, hash3(vec2(floor(a) + 1.0, 0.0), 11.0).x, smoothstep(0.0, 1.0, fract(a)));
     float st = mix(1.0, smoothstep(0.35, 0.75, n) * 1.6, uSrcStreak[i]);
-    vec4 ss = uSrcS[i] * st;
-    vec2 gs = vec2(uSrcG[i].x * st, uSrcG[i].y);
-    vec4 su = uSrcU[i] + uSrcS[i] - ss;
-    gs.y += uSrcG[i].x - gs.x;
+    vec4 srcS = uSrcS[i], srcU = uSrcU[i];
+    vec2 srcG = uSrcG[i];
+    if (i == 0 && uBandN > 0) {
+      // standing: distance from the cup; moving: distance from the line it
+      // moves along (so a point keeps its band while the cup passes over it)
+      vec2 dc = p - uSrc[0].xy;
+      float qr = length(dc) / r;
+      float q = mix(qr, abs(dot(dc, vec2(-uBandDir.y, uBandDir.x))) / r, uBandDir.z);
+      srcS = uBandS[0]; srcU = uBandU[0]; srcG = uBandG[0];
+      for (int k = 1; k < ${NUM_BANDS}; k++) {
+        if (k >= uBandN) break;
+        float w = 1.0 - smoothstep(uBandR[k] - 0.035, uBandR[k] + 0.035, q);
+        srcS = mix(srcS, uBandS[k], w); srcU = mix(srcU, uBandU[k], w); srcG = mix(srcG, uBandG[k], w);
+      }
+      fr = mix(fr, 1.0 - smoothstep(0.75, 0.97, max(q, qr * 0.85)), uSrcPlug[0]);
+    }
+    vec4 ss = srcS * st;
+    vec2 gs = vec2(srcG.x * st, srcG.y);
+    vec4 su = srcU + srcS - ss;
+    gs.y += srcG.x - gs.x;
     S = mix(S, ss, fr);
     U = mix(U, max(su, 0.0), fr);
     G.xy = mix(G.xy, max(gs, 0.0), fr);

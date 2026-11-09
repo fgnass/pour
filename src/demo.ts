@@ -1,5 +1,5 @@
 // Scripted open cup pour: one cup set half into fresh white, the colours
-// poured in, dragged off in a spiral, lifted with a twist; an edge smeared,
+// poured in, dragged off in a spiral and lifted on the way; an edge smeared,
 // then tilt to spread the paint, and the torch to bring up cells.
 import type { Studio } from './model';
 import { P } from './sim/sim';
@@ -84,13 +84,15 @@ export class Demo {
       await this.wait(0.25);
     }
     await this.wait(1.8);
-    await this.animate(3.2, t => {
-      const p = off(ease(t));
+    // drag it off in a spiral, faster and faster, and lift it on the way
+    // (a flick): it glides on while the paint runs out along its path
+    await this.animate(1.8, t => {
+      const p = off(ease(t * 0.5));
       cup.tx = p[0];
       cup.ty = p[1];
     });
-    s.liftCup();
-    await this.wait(1.2);
+    s.liftCup(cup.vx * 1.1, cup.vy * 1.1);
+    await this.wait(2.2);
   }
 
   async start() {

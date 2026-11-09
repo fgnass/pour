@@ -1,6 +1,6 @@
 import { GL, type Program } from './gl';
 import { MATS } from './materials';
-import { CLEAR_FS, FLUX_FS, GLIT_FS, GLITTER_FS, GLITTER_VS, MASK_FS, MASK_VS, NUM_SRC, PART_FS, PIG_FS, RENDER_FS, VEL_FS } from './shaders';
+import { CLEAR_FS, FLUX_FS, GLIT_FS, GLITTER_FS, GLITTER_VS, MASK_FS, MASK_VS, NUM_BANDS, NUM_SRC, PART_FS, PIG_FS, RENDER_FS, VEL_FS } from './shaders';
 
 // Physical parameters (domain units: the short side of the canvas is 1).
 export const P = {
@@ -28,6 +28,10 @@ export type Source = {
   y0?: number;
   /** 0..1: new paint pushes the old paint away instead of mixing into it */
   plug?: number;
+  /** source 0 only: colour bands by distance from the path, oldest (outermost) first */
+  bands?: { r: number; s: number[]; u: number[]; g: number[] }[];
+  /** source 0 only: direction of motion (x, y) and how much it moves (0..1) */
+  bandDir?: [number, number, number];
 };
 
 export const noSource = (): Source => ({ x: 0, y: 0, r: 0, rate: 0, s: [0, 0, 0, 0], u: [0, 0, 0, 0], g: [0, 0], streak: 0 });
@@ -358,6 +362,14 @@ export class Sim {
     gl.uniform2fv(p.uni.uSrcG, f.src.flatMap(s => s.g));
     gl.uniform1fv(p.uni.uSrcStreak, f.src.map(s => s.streak));
     gl.uniform1fv(p.uni.uSrcPlug, f.src.map(s => s.plug ?? 0));
+    const bands = (f.src[0].bands ?? []).slice(-NUM_BANDS);
+    const pad = <T>(a: T[], z: T) => [...a, ...Array<T>(NUM_BANDS - a.length).fill(z)];
+    gl.uniform1i(p.uni.uBandN, bands.length);
+    gl.uniform3f(p.uni.uBandDir, ...(f.src[0].bandDir ?? [1, 0, 0]));
+    gl.uniform1fv(p.uni.uBandR, pad(bands.map(b => b.r), 0));
+    gl.uniform4fv(p.uni.uBandS, pad(bands.map(b => b.s), [0, 0, 0, 0]).flat());
+    gl.uniform4fv(p.uni.uBandU, pad(bands.map(b => b.u), [0, 0, 0, 0]).flat());
+    gl.uniform2fv(p.uni.uBandG, pad(bands.map(b => b.g), [0, 0]).flat());
     gl.uniform1f(p.uni.uTime, this.time);
     g.draw(this.PSfb[1 - this.pi], this.PX, this.PY);
     this.pi = 1 - this.pi;

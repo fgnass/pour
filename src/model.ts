@@ -29,7 +29,11 @@ export const M = {
   // releases the rest.
   leakRest: 0.012, // fraction of the contents per second
   leakMove: 2.5, // extra fraction per second per unit of cup speed
-  liftSecs: 1.4, // a lifted cup empties at a steady rate in this time
+  // a lifted cup empties fast at first and then slower (less paint presses
+  // on the opening): time constant in seconds. A lifted cup is gone after liftSecs.
+  liftTau: 0.55,
+  liftSecs: 2.2,
+  liftGlide: 1.6, // a cup let go while moving slows down at this rate (1 / s)
   maxRings: 10, // colour rings shown in the cup
 };
 
@@ -59,6 +63,9 @@ export type Cup = {
   liftT: number;
   /** contents when the lift started */
   liftV: number;
+  /** a lifted cup that was let go while moving keeps gliding */
+  mvx: number;
+  mvy: number;
   seed: number;
   alpha: number;
 };
@@ -108,16 +115,21 @@ export class Studio {
   }
 
   placeCup(x: number, y: number) {
-    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, rings: [], lifting: false, liftT: 0, liftV: 0, seed: Math.random() * 6.283, alpha: 1 };
+    this.cup = { x, y, tx: x, ty: y, vx: 0, vy: 0, R: M.cupR, rings: [], lifting: false, liftT: 0, liftV: 0, mvx: 0, mvy: 0, seed: Math.random() * 6.283, alpha: 1 };
     return this.cup;
   }
 
-  liftCup() {
-    if (this.cup && !this.cup.lifting) {
-      this.cup.lifting = true;
-      this.cup.liftT = 0;
-      this.cup.liftV = this.cupVolume();
+  /** Lift the cup. With a velocity it keeps moving a little (a flick). */
+  liftCup(vx = 0, vy = 0) {
+    const c = this.cup;
+    if (!c) return;
+    if (!c.lifting) {
+      c.lifting = true;
+      c.liftT = 0;
+      c.liftV = this.cupVolume();
     }
+    c.mvx = vx;
+    c.mvy = vy;
   }
 
   /** true if a pour at (x, y) ends up in the cup */
@@ -174,6 +186,15 @@ export class Studio {
     const s = out.reduce((a, b) => a + b, 0) || 1;
     for (let k = 0; k < out.length; k++) out[k] /= s;
     return out;
+  }
+
+  /** Take q of paint out of the cup, the same share of every pour. */
+  private drainEven(q: number) {
+    const cup = this.cup!;
+    const V = this.cupVolume();
+    const k = Math.min(1, q / V);
+    for (const r of cup.rings) r.v -= r.v * k;
+    if (k >= 1) cup.rings = [];
   }
 
   /** spawn `rate` cells per second in an annulus (r0..r1) around (x, y) */
@@ -289,6 +310,14 @@ export class Studio {
     if (cup) {
       const ox = cup.x,
         oy = cup.y;
+      if (cup.lifting && (cup.mvx || cup.mvy)) {
+        // let go while moving: it glides on and slows down
+        cup.tx += cup.mvx * dt;
+        cup.ty += cup.mvy * dt;
+        const g = Math.exp(-dt * M.liftGlide);
+        cup.mvx *= g;
+        cup.mvy *= g;
+      }
       const f = 1 - Math.exp(-dt * 18);
       cup.x += (cup.tx - cup.x) * f;
       cup.y += (cup.ty - cup.y) * f;
@@ -298,39 +327,72 @@ export class Studio {
       cup.vy += (vy - cup.vy) * 0.5;
       const speed = Math.hypot(cup.vx, cup.vy);
       const V = this.cupVolume();
-      const leak = M.leakRest + M.leakMove * speed;
-      let q = V * (1 - Math.exp(-leak * dt));
-      // lifted: the paint runs out at a steady rate, one pour after the other
-      if (cup.lifting) q = Math.min(V, Math.max((cup.liftV / M.liftSecs) * dt, 0.04 * dt));
-      if (q > 1e-7) {
-        const comp = this.drainCup(q);
-        const subFrac = cup.lifting ? 0.3 : 0.97 - 0.4 * Math.min(1, speed / 0.25);
-        // a lifted cup wobbles a little: the rings come out uneven
-        const w = cup.lifting ? cup.R * 0.25 * Math.min(1, cup.liftT * 2) : 0;
-        src[0] = {
-          x: cup.x + w * Math.sin(cup.liftT * 4.1 + cup.seed),
-          y: cup.y + w * Math.cos(cup.liftT * 3.3 + cup.seed * 1.7),
-          r: cup.R * (cup.lifting ? 0.9 : 1.08),
-          rate: q / dt,
-          streak: cup.lifting ? 0.2 : 0.9,
-          plug: cup.lifting ? 1 : 0,
-          ...splitComp(comp, subFrac),
-        };
-        // cells form where the coloured paint comes out from under the rim
-        const coloured = (q / dt) * (1 - comp[0]) * subFrac;
-        this.spawnCells('cup', dt, M.cellRate * coloured, cup.x, cup.y, cup.R * 0.95, cup.R * 1.15, [0.7, 1.3]);
-        this.dirty = true;
-      }
-      // the cup wall drags paint along
-      push[0] = [cup.x, cup.y, cup.R * 1.35, 0.9];
-      pushVel[0] = clampVel(cup.vx, cup.vy);
       if (cup.lifting) {
+        // lifted: the paint falls out of the open bottom, fast at first.
+        // Moving, the whole cross-section comes out at once: the pours lie
+        // in rings in the cup and come out as stripes along the path.
+        // Standing still, the oldest paint comes first and each pour pushes
+        // the one before outwards: rings.
+        const q = cup.liftT > M.liftSecs ? V : Math.min(V, V * (1 - Math.exp(-dt / M.liftTau)) + 0.002 * dt);
+        if (q > 1e-7) {
+          const move = Math.min(1, Math.max(0, (speed - 0.02) / 0.08));
+          let white = 0;
+          let bands: Source['bands'];
+          let comp: Comp;
+          if (move > 0.3) {
+            let cum = V;
+            bands = cup.rings.map(r => {
+              const b = { r: Math.sqrt(Math.max(0, cum) / V) * 0.92, ...splitComp(r.c, 0.3) };
+              cum -= r.v;
+              white += r.c[0] * r.v;
+              return b;
+            });
+            white /= V;
+            comp = oneHot(0);
+            this.drainEven(q);
+          } else {
+            comp = this.drainCup(q);
+            white = comp[0];
+          }
+          // a cup that stands still wobbles a little: the rings come out uneven
+          const w = cup.R * 0.2 * Math.min(1, cup.liftT * 2) * (1 - move);
+          src[0] = {
+            x: cup.x + w * Math.sin(cup.liftT * 4.1 + cup.seed),
+            y: cup.y + w * Math.cos(cup.liftT * 3.3 + cup.seed * 1.7),
+            x0: ox,
+            y0: oy,
+            r: cup.R * 0.95,
+            rate: q / dt,
+            streak: bands ? 0 : 0.2,
+            plug: 1,
+            bands,
+            bandDir: [cup.vx / (speed || 1), cup.vy / (speed || 1), move],
+            ...splitComp(comp, 0.3),
+          };
+          const coloured = (q / dt) * (1 - white) * 0.3;
+          this.spawnCells('cup', dt, M.cellRate * coloured, cup.x, cup.y, cup.R * 0.6, cup.R * 1.05, [0.7, 1.3], 1, { x: ox, y: oy });
+          this.dirty = true;
+        }
         cup.liftT += dt;
-        cup.alpha = Math.max(0, 1 - cup.liftT / 0.5);
-        const tw = Math.max(0, 1 - cup.liftT / 0.9);
-        this.swirl = [cup.x, cup.y, cup.R * 1.7, 4 * tw];
+        // the cup stays in view while paint still runs out of it
+        cup.alpha = Math.min(1, (this.cupVolume() / Math.max(cup.liftV, 1e-9)) * 4, Math.max(0, 1 - (cup.liftT - M.liftSecs) / 0.3));
         if (this.cupVolume() < 1e-5 && cup.liftT > M.liftSecs) this.cup = null;
+      } else {
+        const leak = M.leakRest + M.leakMove * speed;
+        const q = V * (1 - Math.exp(-leak * dt));
+        if (q > 1e-7) {
+          const comp = this.drainCup(q);
+          const subFrac = 0.97 - 0.4 * Math.min(1, speed / 0.25);
+          src[0] = { x: cup.x, y: cup.y, r: cup.R * 1.08, rate: q / dt, streak: 0.9, ...splitComp(comp, subFrac) };
+          // cells form where the coloured paint comes out from under the rim
+          const coloured = (q / dt) * (1 - comp[0]) * subFrac;
+          this.spawnCells('cup', dt, M.cellRate * coloured, cup.x, cup.y, cup.R * 0.95, cup.R * 1.15, [0.7, 1.3]);
+          this.dirty = true;
+        }
       }
+      // the cup wall drags paint along; lifted, only the falling paint does a little
+      push[0] = [cup.x, cup.y, cup.R * 1.35, cup.lifting ? 0.25 : 0.9];
+      pushVel[0] = clampVel(cup.vx, cup.vy);
     }
 
     // while the paint flows more cells pop up
