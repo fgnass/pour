@@ -1,5 +1,6 @@
-// Scripted open cup pour: three cups, each set half into fresh white, the
-// colours poured in, dragged off in a spiral, lifted with a twist; then tilt.
+// Scripted open cup pour: one cup set half into fresh white, the colours
+// poured in, dragged off in a spiral, lifted with a twist; an edge smeared,
+// then tilt to spread the paint, and the torch to bring up cells.
 import type { Studio } from './model';
 import { P } from './sim/sim';
 
@@ -110,39 +111,39 @@ export class Demo {
       return [c[0] + Math.cos(a) * r + ox * s * s, c[1] + Math.sin(a) * r + oy * s * s * sy];
     };
     try {
-      let c = at(0.5, 0.5);
+      const c = at(0.5, 0.5);
       await this.cupPour(...c, at(0.5, 0.5), spiral(c, Math.PI, -1, 1.1, 0.12, 0.2, 0.02));
-      c = at(0.44, 0.3);
-      await this.cupPour(...c, at(0.38, 0.27), spiral(c, 0, 1, 0.9, 0.11, -0.12, -0.04));
-      c = at(0.62, 0.72);
-      await this.cupPour(...c, at(0.66, 0.78), spiral(c, -Math.PI / 2, 1, 1.0, 0.11, 0.04, 0.12));
-      // soften an edge with the cup
-      await this.wait(1.5);
-      const p0 = at(0.28, 0.62);
+      // smear an edge with the cup
+      await this.wait(0.6);
+      const p0 = at(0.3, 0.62);
       await this.animate(1.4, t => {
         s.push = { x: p0[0] + 0.14 * t, y: p0[1] - 0.05 * t, vx: 0.1, vy: -0.035, r: 0.035 };
       });
       s.push = null;
-      await this.wait(1.5);
       // tilt: come off one side first, then work the paint into the corners
       this.tilting = true;
       const seq = [
-        [-0.55, 0.1, 3.5],
-        [-0.2, -0.6, 3.5],
-        [0.5, -0.45, 3.5],
-        [0.65, 0.2, 3.5],
-        [0.2, 0.65, 3.5],
-        [-0.55, 0.5, 3],
-        [-0.6, -0.5, 3],
-        [0.6, -0.6, 3],
-        [0.6, 0.6, 3],
-        [0, 0, 2],
+        [-0.55, 0.1, 3],
+        [0.2, -0.6, 3],
+        [0.65, 0.2, 3],
+        [-0.2, 0.65, 3],
+        [-0.6, -0.5, 2.5],
+        [0.6, 0.6, 2.5],
+        [0, 0, 1.5],
       ];
       for (const [x, y, d] of seq) {
         s.tilt.tx = x * P.tiltMax;
         s.tilt.ty = y * P.tiltMax;
         await this.wait(d);
       }
+      this.tilting = false;
+      // torch: a slow loop over the middle brings up cells
+      await this.animate(5, t => {
+        const a = t * Math.PI * 2;
+        s.torch = { x: W / 2 + Math.cos(a) * 0.18 * sx, y: H / 2 + Math.sin(a) * 0.12 * sy };
+      });
+      s.torch = null;
+      await this.wait(1);
     } catch (e) {
       if (run === this.run) console.error(e);
       return;
