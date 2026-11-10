@@ -1,7 +1,7 @@
 // Scripted open cup pour: one cup set half into fresh white, filled with
 // colours, dragged off in a spiral so the paint runs out; an edge smeared,
 // then tilt to spread the paint, and the torch to bring up cells.
-import { CupContent } from './cupcontent';
+import { CupContent, FILL_RATE } from './cupcontent';
 import type { Studio } from './model';
 import { P } from './sim/sim';
 
@@ -76,7 +76,7 @@ export class Demo {
       const u = r(),
         v = r();
       content.pouringNew = true;
-      for (let t = 0; t < secs; t += 1 / 30) content.pour(m, u, v, 1 / 30);
+      for (let t = 0; t < (secs * 0.11) / FILL_RATE; t += 1 / 30) content.pour(m, u, v, 1 / 30);
     }
     const cup = s.placeCup(x, y, content);
     await this.wait(1.5);

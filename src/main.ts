@@ -560,7 +560,7 @@ canvas.addEventListener('pointerdown', e => {
     studio.pour = { m: paint, x: p.x, y: p.y };
     markPouring(true);
   } else if (tool === 'swipe') {
-    studio.push = { x: p.x, y: p.y, vx: 0, vy: 0, r: 0.045 };
+    studio.push = { x: p.x, y: p.y, vx: 0, vy: 0, r: 0.055 };
   } else if (tool === 'torch') {
     studio.torch = { x: p.x, y: p.y };
   }

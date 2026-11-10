@@ -16,6 +16,8 @@ export const P = {
   rise: 3.0, // how fast a cell pulls submerged paint up
   tiltMax: 0.5,
   grav: 1.6, // downhill pull per unit of tilt: how fast tilted paint runs
+  flowRound: 0.35, // a finger: the paint at its sides runs back past it
+  flowTogether: 0.4, // ... and behind it flows together again (share of the finger speed)
 };
 
 export type Source = {
@@ -339,6 +341,7 @@ export class Sim {
     gl.uniform2fv(p.uni.uPushVel, f.pushVel.flat());
     gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
+    gl.uniform2f(p.uni.uFlowBack, P.flowRound, P.flowTogether);
   }
   /** pushers sweep from where they were a step ago: each substep gets its part */
   private setPushPart(p: Program, f: Forces, t0: number, t1: number) {

@@ -5,7 +5,7 @@
 import { CUP_GRID } from './sim/sim';
 
 export const GRID = CUP_GRID; // columns across the cup
-const FILL_RATE = 0.11; // mean height per second while pouring (full = 1)
+export const FILL_RATE = 0.22; // mean height per second while pouring (full = 1)
 const MAX_LAYERS = 28;
 const FULL = 0.95; // mean height of a full cup
 const PLUNGE = 1; // how deep poured paint plunges below the spot (share of the paint there)

@@ -31,6 +31,7 @@ uniform vec4 uPush[2];     // x, y, radius, strength
 uniform vec2 uPushA[2];    // where the pusher was one step ago (it sweeps from there)
 uniform vec2 uPushVel[2];
 uniform vec4 uSwirl;       // x, y, radius, omega
+uniform vec2 uFlowBack;    // finger: flow round it, flow together behind it
 // 1 inside the band swept by a disc of radius r moving from a to b
 float band(vec2 p, vec2 a, vec2 b, float r) {
   vec2 ab = b - a;
@@ -76,6 +77,21 @@ vec2 imposedVel(vec2 p) {
       vec2 q = p - a - ab * t, side = vec2(-dir.y, dir.x);
       vec2 n = normalize(q + (dir * 0.25 + side * sign(dot(q, side)) * 0.15) * uPush[i].z);
       v += n * max(0.0, dot(uPushVel[i], n)) * w * m;
+      // Ahead and at the sides the paint gives way as round a moving
+      // cylinder: it runs back past the finger ...
+      vec2 U = uPushVel[i];
+      float R = uPush[i].z, l = max(length(q), 1e-6), sp = length(U);
+      vec2 e = q / l;
+      float k = (R * R) / (l * l) * (1.0 - smoothstep(2.0 * R, 4.0 * R, l)) * smoothstep(0.9 * R, 1.3 * R, l);
+      v += uFlowBack.x * w * k * smoothstep(-0.5, 0.2, dot(e, dir)) * (2.0 * dot(U, e) * e - U);
+      // ... and behind it runs together again from both sides and closes
+      // the groove. With the backward flow at the sides this makes loops
+      // that stir the colours.
+      vec2 r = p - uPush[i].xy;
+      float back = -dot(r, dir), lat = dot(r, side);
+      float wake = smoothstep(0.8 * R, 1.6 * R, back) * (1.0 - smoothstep(2.0 * R, 8.0 * R, back))
+                 * smoothstep(0.0, 0.7 * R, abs(lat)) * (1.0 - smoothstep(1.2 * R, 5.0 * R, abs(lat)));
+      v -= side * sign(lat) * uFlowBack.y * w * sp * wake;
     }
   }
   vec2 d = p - uSwirl.xy;

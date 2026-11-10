@@ -7,31 +7,31 @@ import { NUM_SRC } from './sim/shaders';
 import { MAX_IMPOSED, noSource, P, type Forces, type Overlay, type Sim, type Source } from './sim/sim';
 
 export const M = {
-  cupR: 0.07,
-  pourRate: 0.06, // volume / s while a colour is poured
-  whiteRate: 0.14,
-  whiteR: 0.045,
-  colorR: 0.03,
+  cupR: 0.085,
+  pourRate: 0.08, // volume / s while a colour is poured
+  whiteRate: 0.16,
+  whiteR: 0.06,
+  colorR: 0.05, // about a fingertip wide
   // A moving stream lays Q / v of paint per length: a fast hand gives a thin
   // line, a slow hand a thick one. Above this speed the line gets narrower
   // (width and height both scale with the square root of Q / v) ...
   streamV: 0.25,
   // ... down to this fraction of the stream radius
-  streamMin: 0.35,
+  streamMin: 0.75,
   // thick paint starts to flow slowly: a pour on the canvas starts as a thin
   // thread and is a full stream after about this time (seconds, time constant)
   pourRamp: 0.25,
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
-  torchR: 0.09, // radius of the torch flame
-  torchCells: 45, // cells per second under the flame
+  torchR: 0.15, // radius of the torch flame
+  torchCells: 110, // cells per second under the flame
   torchHeat: 6, // how much faster paint rises under the flame
   // The cup wall holds the paint back: only a little seeps out under the
   // rim. Moving the cup lets more escape.
   leakRest: 0.012, // fraction of the contents per second
-  leakMove: 2.5, // extra fraction per second per unit of cup speed
+  leakMove: 1.6, // extra fraction per second per unit of cup speed
   leakMaxSpeed: 0.35, // above this speed no more paint gets out
-  cupFull: 0.3, // volume of a full cup
+  cupFull: 0.45, // volume of a full cup
   cupTwist: 0.6, // how much the paint under a turning cup turns with it
 };
 
