@@ -445,7 +445,7 @@ function toolHint() {
       if (cupFill.isOpen) return 'Choose a colour, then touch the cup: the paint runs down through your finger';
       if (cupReady) return 'Tap the canvas to set the cup down';
       if (studio.cup && studio.cup.content.level() <= 0.003) return 'Drag the empty cup to push the paint · tap *Cup* for a new one';
-      if (studio.cup) return 'Drag the cup to pour · grab the rim to turn it';
+      if (studio.cup) return 'Drag the cup to pour';
       return 'Tap *Cup* to fill a new cup';
     case 'swipe':
       return 'Drag through wet paint to push it';
@@ -542,7 +542,7 @@ canvas.addEventListener('pointerdown', e => {
       cup.lifted = false;
       cupReady = false;
       navigator.vibrate?.(12);
-      guide('Drag the cup to pour · grab the rim to turn it');
+      guide('Drag the cup to pour');
     } else if (cup && studio.hitsCup(p.x, p.y, 1.3)) {
       // grabbed: where it was touched stays under the finger
       drag.gx = cup.tx - p.x;

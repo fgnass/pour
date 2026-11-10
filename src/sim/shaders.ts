@@ -270,6 +270,8 @@ void finish(vec4 c, float gold, out float irid, out vec3 sheen, out float metal,
 
 // scale of the cells' push potential in the mask (see MASK_FS)
 const CELL_PHI = '1000.0';
+// thickness of poured paint that hides about 63 % of the paint below it
+const POUR_OPAQUE = '0.12';
 
 // Torch: the hot surface flows away from the flame (Marangoni flow), in
 // domain units / s. Shared by the surface pigments and the glitter.
@@ -449,7 +451,12 @@ void main() {
     // New paint lies on top of the wet paint: its colour covers the surface
     // fast, and the surface colour it covers goes under (the cells and the
     // torch can bring it up again). The amount of each pigment stays the same.
-    float cov = min(1.0, fr * (1.0 + 2.0 * fr));
+    // A poured stream covers by its own thickness, not by its share of the
+    // paint: a thin fast line on thick paint still hides it, it does not look
+    // like a glaze. (Summed over the steps a point gets paint, this does not
+    // depend on the step size.)
+    float opaque = i == 0 ? 0.0 : 1.0 - exp(-dh / ${POUR_OPAQUE});
+    float cov = min(1.0, max(fr * (1.0 + 2.0 * fr), opaque));
     vec4 T = mix(S + U, ss + max(su, 0.0), fr);
     vec2 TG = vec2(mix(G.x + G.y, gs.x + max(gs.y, 0.0), fr));
     S = mix(S, ss, cov);

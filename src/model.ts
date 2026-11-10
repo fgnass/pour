@@ -18,6 +18,8 @@ export const M = {
   streamV: 0.25,
   // ... down to this fraction of the stream radius
   streamMin: 0.75,
+  // ... and above that speed the stream gets stronger, up to this factor
+  streamBoost: 2.5,
   // thick paint starts to flow slowly: a pour on the canvas starts as a thin
   // thread and is a full stream after about this time (seconds, time constant)
   pourRamp: 0.25,
@@ -246,7 +248,11 @@ export class Studio {
       const v = this.landT > t0 ? Math.hypot(land.x - x0, land.y - y0) / (this.landT - t0) : 0;
       this.landV += (v - this.landV) * (1 - Math.exp(-dt * 10));
       // cross-section of the line: flow / speed (and the stream itself while it builds up)
-      const thin = Math.max(M.streamMin, Math.sqrt(flow * Math.min(1, M.streamV / Math.max(this.landV, 1e-6))));
+      const slow = Math.min(1, M.streamV / Math.max(this.landV, 1e-6));
+      const thin = Math.max(M.streamMin, Math.sqrt(flow * slow));
+      // A fast hand would lay a line too thin to cover what is below: the
+      // stream gets stronger instead, so the line keeps its body
+      const boost = Math.min(M.streamBoost, Math.max(1, (M.streamMin * M.streamMin) / slow));
       const r = (white ? M.whiteR : M.colorR) * thin;
       src[si++] = {
         x: land.x,
@@ -254,11 +260,11 @@ export class Studio {
         x0: prev.x,
         y0: prev.y,
         r,
-        rate: (white ? M.whiteRate : M.pourRate) * flow,
+        rate: (white ? M.whiteRate : M.pourRate) * flow * boost,
         streak: 0,
         ...splitComp(oneHot(pour.m), white ? 0 : 0.55),
       };
-      if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * flow * 0.55, land.x, land.y, 0, r, [1.5, 3], 1, prev);
+      if (!white) this.spawnCells('pour', dt, M.cellRate * M.pourRate * flow * boost * 0.55, land.x, land.y, 0, r, [1.5, 3], 1, prev);
       this.stream = { x: land.x, y: land.y, col: MATS[pour.m].rgb };
       this.dirty = true;
     }

@@ -146,7 +146,8 @@ export class CupContent {
     const seg = this.seg;
     if (!seg || seg.m !== m || Math.hypot(seg.u - u, seg.v - v) > 0.06 || this.pouringNew) {
       this.commit();
-      this.seg = { m, u, v, vol: 0, base: this.cols.map(c => (c ? c.map(l => ({ ...l })) : null)) };
+      const base = this.cols.map(c => (c ? c.map(l => ({ ...l })) : null));
+      this.seg = { m, u, v, vol: 0, base, baseSum: base.reduce((a, c) => a + (c ? c.reduce((b, l) => b + l.h, 0) : 0), 0) };
       let p = this.pours[this.pours.length - 1];
       if (!p || p.m !== m || this.pouringNew) this.pours.push((p = { m, amount: 0, u, v }));
       this.pouringNew = false;
@@ -154,7 +155,10 @@ export class CupContent {
     const sg = this.seg!;
     // a full cup: as much runs out at the bottom as comes in at the top
     // (the oldest paint, from the bottom of every column)
-    if (full) for (const c of sg.base) if (c) takeBottom(c, FILL_RATE * dt);
+    if (full) {
+      for (const c of sg.base) if (c) takeBottom(c, FILL_RATE * dt);
+      sg.baseSum = sg.base.reduce((a, c) => a + (c ? c.reduce((b, l) => b + l.h, 0) : 0), 0);
+    }
     // poured volume (cup units: the floor is the unit disc, full = 1 high)
     const add = FILL_RATE * dt * Math.PI;
     sg.vol += add;
@@ -168,7 +172,7 @@ export class CupContent {
     this.seg = null;
   }
 
-  private seg: { m: number; u: number; v: number; vol: number; base: (Layer[] | null)[] } | null = null;
+  private seg: { m: number; u: number; v: number; vol: number; base: (Layer[] | null)[]; baseSum: number } | null = null;
 
   private push(sg: NonNullable<CupContent['seg']>) {
     const { u: pu, v: pv, base } = sg;
@@ -188,6 +192,9 @@ export class CupContent {
     // the pours lie side by side in rings. The disc's area follows its volume.
     const deep = Math.max(NEW_THICK, PLUNGE * hu);
     const a2 = sg.vol / Math.PI / (NEW_THICK + deep * 0.6);
+    /** cells with new paint (the disc, the bare floor) and how much each got */
+    const disc: [number, number][] = [];
+    let total = 0;
     for (let k = 0; k < this.cols.length; k++) {
       if (!this.cols[k]) continue;
       const [cu, cv] = cellUV(k % GRID, (k / GRID) | 0);
@@ -206,16 +213,35 @@ export class CupContent {
         // (a blunt cone: in the inner half of its disc down to the floor)
         const depth = Math.max(NEW_THICK, deep * Math.min(1, 2 * (1 - d / a)));
         const c = bottomOf(under, hu - depth);
-        pushTop(c, sg.m, depth + NEW_THICK * Math.max(1, a2));
+        const add = depth + NEW_THICK * Math.max(1, a2);
+        pushTop(c, sg.m, add);
         this.cols[k] = c;
+        disc.push([k, add]);
       } else {
         // pushed out: this cell shows what was nearer to the spot
         const s = rw * Math.sqrt(Math.max(0, (d * d - a * a) / Math.max(1e-6, rw * rw - a * a)));
         const c = at(pu + ex * s, pv + ey * s).map(l => ({ ...l }));
         // no paint there yet (an empty cup): the new paint runs over the
         // bare floor at once
-        if (!c.length) pushTop(c, sg.m, NEW_THICK * Math.max(1, a2) * 0.5);
+        if (!c.length) {
+          pushTop(c, sg.m, NEW_THICK * Math.max(1, a2) * 0.5);
+          disc.push([k, NEW_THICK * Math.max(1, a2) * 0.5]);
+        }
         this.cols[k] = c;
+      }
+      total += this.height(k);
+    }
+    // The disc and the push are only near to true to volume (the wall cuts
+    // the disc, the grid is coarse): the new paint gets thicker or thinner
+    // so that the cup holds exactly what was in it plus what came in. Else
+    // the level would rise unevenly and sometimes even sink a little.
+    const want = sg.baseSum + (sg.vol / Math.PI) * this.n;
+    const added = disc.reduce((a, d) => a + d[1], 0);
+    if (added > 1e-9) {
+      const f = Math.max(0, want - total + added) / added;
+      for (const [k, add] of disc) {
+        const c = this.cols[k]!;
+        c[c.length - 1].h = Math.max(0, c[c.length - 1].h + add * (f - 1));
       }
     }
   }
