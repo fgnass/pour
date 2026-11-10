@@ -1,8 +1,9 @@
 import './style.css';
+import { CupFill } from './cupfill';
 import { Demo } from './demo';
 import { initInstall } from './install';
 import { mountIcons } from './icons';
-import { Studio } from './model';
+import { M as MODEL, Studio } from './model';
 import { GL } from './sim/gl';
 import { MATS, PALETTES, setPalette, type Material } from './sim/materials';
 import { P, Sim, type Quality } from './sim/sim';
@@ -16,8 +17,39 @@ mountIcons();
 const canvas = $<HTMLCanvasElement>('#gl');
 const hintEl = $('#hint');
 const paintsEl = $('#paints');
-const cupBtn = $<HTMLButtonElement>('#tools [data-tool="cup"]');
 const paletteSheet = $('#palettes');
+// filling the cup (see cupfill.ts); a filled cup waits to be set down
+const cupFill = new CupFill($('#cupfill'), $('#cupfill canvas'), $('#cupfill .cupfill-actions'), () => paint);
+let cupReady = false;
+// the paint runs into the cup: the step 'touch the cup' is done
+cupFill.onChange = () => cupFill.pouringM !== null && guideDone();
+/** an empty cup to fill */
+function newCup(announce = true) {
+  studio.cup = null;
+  cupReady = false;
+  cupFill.content.empty();
+  cupFill.open();
+  if (announce) guide(toolHint());
+}
+$('#cupSet').addEventListener('click', () => {
+  if (cupFill.content.level() < 0.02) {
+    guide('Touch the cup to pour paint into it first');
+    return;
+  }
+  // the cup turns to the view from above and moves over the middle of the
+  // canvas; there the canvas takes it over (held up: a tap sets it down)
+  const r = (MODEL.cupR / sim.dom[0]) * layout.w;
+  cupFill.setDown(layout.left + layout.w / 2, layout.top + layout.h / 2, r, () => {
+    studio.placeCup(sim.dom[0] / 2, sim.dom[1] / 2, cupFill.content, true);
+    // draw the canvas with the cup now, in the same frame as the fill view
+    // goes away (else the cup is gone for a frame or two)
+    sim.render(studio.overlay(lastView), canvas.width, canvas.height);
+    cupFill.close();
+    cupReady = true;
+    wake();
+    guide(toolHint());
+  });
+});
 const paintsBar = $('.dock .paints');
 const sheet = $('#sheet');
 const startEl = $('#start');
@@ -25,30 +57,17 @@ const startEl = $('#start');
 // ---------------------------------------------------------------- setup
 const qs = new URLSearchParams(location.search);
 const coarse = matchMedia('(pointer: coarse)').matches;
-// Crash guard: some phone GPUs kill the tab. We note how far the start got;
-// if the last start never finished, this one runs in safe mode.
-const BOOT_KEY = 'pour.boot';
-let crashedAt: string | null = null;
+const quality: Quality = {
+  n: +(qs.get('n') ?? 0) || (coarse ? 200 : 288),
+  np: +(qs.get('np') ?? 0) || (coarse ? 512 : 720),
+  glitter: qs.get('glitter') !== '0',
+};
+// (a mark from the crash guard of earlier versions: not needed any more)
 try {
-  crashedAt = localStorage.getItem(BOOT_KEY);
+  localStorage.removeItem('pour.boot');
 } catch {
   /* no storage */
 }
-const boot = (stage: string | null) => {
-  try {
-    if (stage) localStorage.setItem(BOOT_KEY, stage);
-    else localStorage.removeItem(BOOT_KEY);
-  } catch {
-    /* no storage */
-  }
-};
-const safe = qs.has('safe') || (!!crashedAt && !qs.has('unsafe'));
-const quality: Quality = {
-  n: +(qs.get('n') ?? 0) || (safe ? 160 : coarse ? 200 : 288),
-  np: +(qs.get('np') ?? 0) || (safe ? 384 : coarse ? 512 : 720),
-  glitter: qs.get('glitter') !== '0' && !safe,
-};
-boot('init');
 
 let g: GL;
 try {
@@ -64,7 +83,12 @@ function showError(msg: string) {
   startEl.hidden = true;
 }
 
-const SETTLE_MS = 8000; // keep simulating this long after the last activity
+const SETTLE_MS = 8000;
+/** a cup keeps the simulation going only while it moves, turns or fades (standing, it pours nothing) */
+function cupBusy() {
+  const c = studio.cup;
+  return !!c && (Math.hypot(c.vx, c.vy) > 1e-3 || Math.hypot(c.tx - c.x, c.ty - c.y) > 1e-4 || Math.abs(c.omega) > 0.05 || c.alpha < 1);
+} // keep simulating this long after the last activity
 let lastBusy = -Infinity;
 let lastView: [number, number] = [NaN, NaN];
 let needsDraw = true;
@@ -95,13 +119,11 @@ const viewAspect = () => {
   const s = screen.width / screen.height;
   return Math.min(4, Math.max(0.25, a > 0 && isFinite(a) ? a : s > 0 && isFinite(s) ? s : 9 / 16));
 };
-boot('compile');
 let sim: Sim;
 try {
   sim = new Sim(g, viewAspect(), quality);
 } catch (e) {
   // a shader this GPU does not accept: say so instead of hanging
-  boot(null);
   const info = `(view ${innerWidth}×${innerHeight}, aspect ${viewAspect().toFixed(3)}, n ${quality.n}, np ${quality.np}${quality.glitter ? ', glitter' : ''})`;
   showError('Your browser could not set up the paint simulation. ' + (e as Error).message.split('\n')[0] + ' ' + info);
   throw e;
@@ -164,14 +186,166 @@ function toDomain(e: { clientX: number; clientY: number }) {
 
 // ---------------------------------------------------------------- hint
 let hintTimer = 0;
-function hint(text: string, ms = 4000) {
+/** what to do next: it stays until it is done (guideDone) or another step replaces it */
+let guideText: string | null = null;
+function showHint(text: string) {
   hintEl.innerHTML = '';
   const s = document.createElement('span');
-  s.textContent = text;
+  // (*Label*: the name of a button, shown in bold)
+  text.split('*').forEach((part, i) => {
+    if (i % 2) {
+      const b = document.createElement('b');
+      b.textContent = part;
+      s.append(b);
+    } else s.append(part);
+  });
+  // a step of the tutorial: an x ends the tutorial
+  if (tutorial && text === guideText) {
+    const x = document.createElement('button');
+    x.className = 'hint-close';
+    x.setAttribute('aria-label', 'End the tutorial');
+    x.textContent = '×';
+    x.addEventListener('click', endTutorial);
+    s.append(x);
+  }
   hintEl.append(s);
   hintEl.classList.add('show');
   clearTimeout(hintTimer);
-  hintTimer = window.setTimeout(() => hintEl.classList.remove('show'), ms);
+}
+/** a short note; then the open step (if any) shows again */
+function hint(text: string, ms = 4000) {
+  showHint(text);
+  hintTimer = window.setTimeout(() => (guideText && !tutorial?.hidden ? showHint(guideText) : hintEl.classList.remove('show')), ms);
+}
+/** the next step: it stays until the user does it (the tutorial has its own steps) */
+function guide(text: string) {
+  if (tutorial) return;
+  guideText = text;
+  showHint(text);
+}
+/** the user did what the open step asked */
+function guideDone() {
+  if (tutorial || guideText === null) return;
+  guideText = null;
+  // (it fades out a moment after the user began; a new step stops that)
+  clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => hintEl.classList.remove('show'), 500);
+}
+
+// ---------------------------------------------------------------- tutorial
+// "How it works": one step after the other, on the canvas as it is. Each
+// step looks at what goes on (every frame) and is done when the user did it.
+// While the user is at it, the step's hint fades out; when they stop before
+// the step is done, it comes back.
+type Step = { text: string; done: (dt: number, s: StepState) => boolean; on?: (s: StepState) => boolean };
+type StepState = { t: number; m: number; d: number };
+let tutorial: { i: number; s: StepState; busy: number; idle: number; hidden: boolean } | null = null;
+/** the user held the action on for `sec` seconds and has let go */
+const heldFor = (on: boolean, sec: number, s: StepState, dt: number) => {
+  if (on) s.t += dt;
+  return !on && s.t >= sec;
+};
+const STEPS: Step[] = [
+  {
+    text: 'Choose a colour below, then hold a finger on the canvas to pour it',
+    on: () => !!studio.pour,
+    done: (dt, s) => {
+      if (studio.pour) s.m = studio.pour.m;
+      return tool === 'pour' && heldFor(!!studio.pour, 0.8, s, dt);
+    },
+  },
+  {
+    text: 'Take another colour and pour it into the first one',
+    on: s => !!studio.pour && studio.pour.m !== s.m,
+    done: (dt, s) => {
+      return heldFor(!!studio.pour && studio.pour.m !== s.m, 0.8, s, dt);
+    },
+  },
+  { text: 'Now tap *Cup*: you fill a cup with layers of paint', done: () => cupFill.isOpen },
+  {
+    text: 'Touch the cup to pour paint in · change the colour now and then for layers',
+    on: () => cupFill.pouringM !== null,
+    done: () => {
+      const c = cupFill.content;
+      return cupFill.pouringM === null && (c.level() > 0.4 || (c.level() > 0.15 && new Set(c.pours.map(p => p.m)).size > 1));
+    },
+  },
+  { text: 'Tap *Done* when you like the layers', done: () => cupReady },
+  { text: 'Tap the canvas where the cup should stand', done: () => !!studio.cup && !studio.cup.lifted },
+  {
+    text: 'Drag the cup slowly over the canvas: the paint runs out under its rim',
+    on: () => !!drag && tool === 'cup',
+    done: (dt, s) => {
+      const c = studio.cup;
+      if (!c) return true;
+      s.d += Math.hypot(c.vx, c.vy) * dt;
+      return s.d > 0.4 || c.content.level() < 0.01;
+    },
+  },
+  { text: 'Tap *Swipe* and drag through the wet paint to push it', on: () => tool === 'swipe' && !!studio.push, done: (dt, s) => tool === 'swipe' && heldFor(!!studio.push && !!drag?.moved, 0.6, s, dt) },
+  {
+    text: coarse ? 'Tap *Tilt*, then tilt your phone: the paint runs downhill' : 'Tap *Tilt*, then drag the canvas (or use the arrow keys): the paint runs downhill',
+    on: () => tool === 'tilt' && Math.hypot(studio.tilt.x, studio.tilt.y) > 0.25 * P.tiltMax,
+    done: (dt, s) => {
+      const t = studio.tilt;
+      if (tool === 'tilt' && Math.hypot(t.x, t.y) > 0.25 * P.tiltMax) s.t += dt;
+      return s.t > 1;
+    },
+  },
+  { text: 'Tap *Torch* and move the flame over the paint: cells open and show the colours below', on: () => !!studio.torch, done: (dt, s) => heldFor(!!studio.torch, 2, s, dt) },
+];
+function startTutorial() {
+  demo.stop();
+  // (it starts with pouring)
+  setTool('pour', false);
+  tutorial = { i: -1, s: { t: 0, m: -1, d: 0 }, busy: 0, idle: 0, hidden: false };
+  nextStep();
+}
+function nextStep() {
+  if (!tutorial) return;
+  tutorial.i++;
+  tutorial.s = { t: 0, m: tutorial.s.m, d: 0 };
+  tutorial.busy = tutorial.idle = 0;
+  tutorial.hidden = false;
+  if (tutorial.i >= STEPS.length) {
+    tutorial = null;
+    guideText = null;
+    hint("That's it – have fun!", 4000);
+    return;
+  }
+  guideText = STEPS[tutorial.i].text;
+  showHint(guideText);
+}
+function endTutorial() {
+  tutorial = null;
+  guideText = null;
+  clearTimeout(hintTimer);
+  hintEl.classList.remove('show');
+}
+function tutorialTick(dt: number) {
+  if (!tutorial || demo.active) return;
+  const tu = tutorial,
+    st = STEPS[tu.i];
+  if (st.done(dt, tu.s)) {
+    navigator.vibrate?.(10);
+    nextStep();
+    return;
+  }
+  if (st.on?.(tu.s)) {
+    tu.busy += dt;
+    tu.idle = 0;
+  } else {
+    tu.idle += dt;
+    tu.busy = 0;
+  }
+  if (!tu.hidden && tu.busy > 0.4) {
+    tu.hidden = true;
+    clearTimeout(hintTimer);
+    hintEl.classList.remove('show');
+  } else if (tu.hidden && tu.idle > 1.2) {
+    tu.hidden = false;
+    showHint(guideText!);
+  }
 }
 
 // ---------------------------------------------------------------- paints
@@ -203,8 +377,10 @@ function buildSwatches() {
 function selectPaint(m: number, announce = false) {
   paint = m;
   paintsEl.querySelectorAll<HTMLElement>('.swatch').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.m! === m)));
+  // with the Cup tool the paints fill the cup (hold one to pour it in)
+  if (tool === 'cup') return;
   if (tool !== 'pour') setTool('pour', false);
-  if (announce) hint(studio.cup && !studio.cup.lifting ? `${MATS[m].name} – hold to pour it into the cup` : `${MATS[m].name} – hold to pour`);
+  if (announce) guide(`${MATS[m].name} – hold to pour`);
 }
 
 // palettes: the choice is kept for the next visit. Paint on the canvas takes
@@ -264,12 +440,13 @@ let tool: Tool = 'pour';
 function toolHint() {
   switch (tool) {
     case 'pour':
-      return studio.cup && !studio.cup.lifting
-        ? 'Hold to pour into the cup · drag to move it · flick it away to lift'
-        : `Hold to pour ${MATS[paint].name.toLowerCase()}`;
+      return `Hold to pour ${MATS[paint].name.toLowerCase()}`;
     case 'cup':
-      if (studio.cup?.lifting) return 'Drag to lead the cup while the paint runs out';
-      return 'Tap to set the cup into the paint';
+      if (cupFill.isOpen) return 'Choose a colour, then touch the cup: the paint runs down through your finger';
+      if (cupReady) return 'Tap the canvas to set the cup down';
+      if (studio.cup && studio.cup.content.level() <= 0.003) return 'Drag the empty cup to push the paint · tap *Cup* for a new one';
+      if (studio.cup) return 'Drag the cup to pour · grab the rim to turn it';
+      return 'Tap *Cup* to fill a new cup';
     case 'swipe':
       return 'Drag through wet paint to push it';
     case 'torch':
@@ -284,41 +461,34 @@ function toolHint() {
 }
 function setTool(t: Tool, announce = true) {
   if (t === 'tilt' && tool !== 'tilt') startTilt();
+  // the cup is only there while the Cup tool is on
+  if (t !== 'cup') {
+    studio.cup = null;
+    cupReady = false;
+    cupFill.close();
+  }
+  const fresh = t === 'cup' && tool !== 'cup';
   tool = t;
+  // a new cup: fill it first
+  if (fresh) newCup(false);
   document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tool === t)));
   // paints only matter while pouring or filling the cup
   paintsBar.classList.toggle('off', t !== 'pour' && t !== 'cup');
   if (t !== 'pour' && t !== 'cup') paletteSheet.hidden = true;
-  if (announce) hint(toolHint());
+  if (announce) guide(toolHint());
 }
 document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
   b.addEventListener('click', () => {
-    // with a cup on the canvas, the cup button lifts it
-    if (b === cupBtn && cupOnCanvas) lift();
-    // a second tap turns the torch or tilt off: then no tool is on
-    else if ((b.dataset.tool === 'torch' || b.dataset.tool === 'tilt') && tool === b.dataset.tool) {
+    // a second tap turns the cup, the torch or tilt off: then no tool is on
+    // (the cup goes away, filled or not)
+    if ((b.dataset.tool === 'cup' || b.dataset.tool === 'torch' || b.dataset.tool === 'tilt') && tool === b.dataset.tool) {
       setTool('none', false);
-      hint(b.dataset.tool === 'tilt' ? 'Tilt off – the canvas lies flat' : 'Torch off');
+      guideText = null;
+      hint(b.dataset.tool === 'tilt' ? 'Tilt off – the canvas lies flat' : b.dataset.tool === 'cup' ? 'Cup put away' : 'Torch off');
     }
     else setTool(b.dataset.tool as Tool);
   }),
 );
-
-// The cup button is the Cup tool, or Lift while a cup is on the canvas.
-let cupOnCanvas = false;
-const CUP_HTML = cupBtn.innerHTML;
-const LIFT_HTML = '<span class="icon" data-icon="upload"></span><span>Lift</span>';
-function syncCupBtn() {
-  const on = !!studio.cup && !studio.cup.lifting;
-  if (on === cupOnCanvas) return;
-  cupOnCanvas = on;
-  cupBtn.innerHTML = on ? LIFT_HTML : CUP_HTML;
-  cupBtn.setAttribute('role', on ? 'button' : 'radio');
-  cupBtn.classList.toggle('lift', on);
-  mountIcons(cupBtn);
-  if (on && tool === 'cup') setTool('pour', false);
-  cupBtn.setAttribute('aria-checked', String(tool === 'cup'));
-}
 
 // ---------------------------------------------------------------- canvas gestures
 type Drag = {
@@ -333,26 +503,14 @@ type Drag = {
   cx: number;
   cy: number;
   moved: boolean;
-  /** started on the cup: hold to pour into it, drag to move it */
+  /** started on the cup: drag to move it */
   onCup: boolean;
+  /** from the finger to the middle of the cup */
+  gx: number;
+  gy: number;
 };
 let drag: Drag | null = null;
 const manualTilt = { x: 0, y: 0 };
-
-/** a point on the cup, kept inside its rim (the touch area is a bit larger) */
-function inCup(p: { x: number; y: number }) {
-  const c = studio.cup!;
-  const dx = p.x - c.x,
-    dy = p.y - c.y,
-    l = Math.hypot(dx, dy),
-    k = l > c.R * 0.9 ? (c.R * 0.9) / l : 1;
-  return { x: c.x + dx * k, y: c.y + dy * k };
-}
-
-/** where paint lands: into the cup while one stands on the canvas, else under the finger */
-function pourPoint(p: { x: number; y: number }) {
-  return studio.cup && !studio.cup.lifting ? inCup(p) : { x: p.x, y: p.y };
-}
 
 canvas.addEventListener('pointerdown', e => {
   wake();
@@ -364,32 +522,43 @@ canvas.addEventListener('pointerdown', e => {
     /* pointer already gone */
   }
   const p = toDomain(e);
-  drag = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now(), vx: 0, vy: 0, cx: 0, cy: 0, moved: false, onCup: false };
+  // (the canvas did what the hint asked; setting a held cup down gives the next step)
+  guideDone();
+  drag = { id: e.pointerId, x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now(), vx: 0, vy: 0, cx: 0, cy: 0, moved: false, onCup: false, gx: 0, gy: 0 };
   const cup = studio.cup;
-  if (cup?.lifting && tool !== 'tilt') {
-    // a lifted cup hangs at the finger: drag anywhere to lead it
+  if (tool === 'cup') {
     drag.onCup = true;
-    drag.cx = cup.tx;
-    drag.cy = cup.ty;
-    cup.mvx = cup.mvy = 0;
-  } else if (cup && tool !== 'tilt' && studio.hitsCup(p.x, p.y, 1.3)) {
-    drag.onCup = true;
-    drag.cx = cup.tx;
-    drag.cy = cup.ty;
-    if (tool === 'pour') {
-      studio.pour = { m: paint, ...inCup(p) };
-      markPouring(true);
+    if (cupReady && cup) {
+      // set the held cup down: where it is when it is touched (then drag it
+      // on), else at the tap
+      if (studio.hitsCup(p.x, p.y, 1.3)) {
+        drag.gx = cup.tx - p.x;
+        drag.gy = cup.ty - p.y;
+      } else {
+        cup.x = cup.tx = cup.mx = p.x;
+        cup.y = cup.ty = cup.my = p.y;
+        cup.vx = cup.vy = 0;
+      }
+      cup.lifted = false;
+      cupReady = false;
+      navigator.vibrate?.(12);
+      guide('Drag the cup to pour · grab the rim to turn it');
+    } else if (cup && studio.hitsCup(p.x, p.y, 1.3)) {
+      // grabbed: where it was touched stays under the finger
+      drag.gx = cup.tx - p.x;
+      drag.gy = cup.ty - p.y;
+    } else if (cup) {
+      // somewhere else: the cup is lifted and set down there, no paint on the way
+      cup.x = cup.tx = cup.mx = p.x;
+      cup.y = cup.ty = cup.my = p.y;
+      cup.vx = cup.vy = 0;
+    } else {
+      drag.onCup = false;
+      newCup();
     }
   } else if (tool === 'pour') {
-    // with a cup on the canvas, pouring always fills the cup
-    studio.pour = { m: paint, ...pourPoint(p) };
+    studio.pour = { m: paint, x: p.x, y: p.y };
     markPouring(true);
-  } else if (tool === 'cup' && !cup) {
-    studio.placeCup(p.x, p.y);
-    navigator.vibrate?.(12);
-    drag.onCup = true;
-    drag.cx = p.x;
-    drag.cy = p.y;
   } else if (tool === 'swipe') {
     studio.push = { x: p.x, y: p.y, vx: 0, vy: 0, r: 0.045 };
   } else if (tool === 'torch') {
@@ -411,21 +580,27 @@ canvas.addEventListener('pointermove', e => {
   if (drag.onCup) {
     const cup = studio.cup;
     if (!cup) return;
-    if (drag.moved || cup.lifting) {
-      // dragging moves the cup; pouring stops while it moves
-      if (studio.pour) {
-        studio.pour = null;
-        markPouring(false);
-      }
-      const [W, H] = sim.dom;
-      cup.tx = Math.min(W, Math.max(0, drag.cx + p.x - drag.sx));
-      cup.ty = Math.min(H, Math.max(0, drag.cy + p.y - drag.sy));
-    } else if (studio.pour) {
-      // pour where the finger is (the model keeps it inside the cup)
-      Object.assign(studio.pour, inCup(p));
+    // Held near the middle, the cup only moves. Held at the rim, it is
+    // pulled along by that point: the rest of it trails behind and turns.
+    const g = Math.hypot(drag.gx, drag.gy);
+    if (g > cup.R * 0.4) {
+      const bx = cup.tx - p.x,
+        by = cup.ty - p.y,
+        l = Math.hypot(bx, by) || 1;
+      const nx = (bx / l) * g,
+        ny = (by / l) * g;
+      let da = Math.atan2(ny, nx) - Math.atan2(drag.gy, drag.gx);
+      da -= Math.round(da / (Math.PI * 2)) * Math.PI * 2;
+      studio.turnCup(da);
+      cup.omega = cup.omega * 0.5 + (da / dt) * 0.5;
+      drag.gx = nx;
+      drag.gy = ny;
     }
+    const [W, H] = sim.dom;
+    cup.tx = Math.min(W, Math.max(0, p.x + drag.gx));
+    cup.ty = Math.min(H, Math.max(0, p.y + drag.gy));
   } else if (tool === 'pour' && studio.pour) {
-    Object.assign(studio.pour, pourPoint(p));
+    Object.assign(studio.pour, { x: p.x, y: p.y });
   } else if (tool === 'swipe' && studio.push) {
     Object.assign(studio.push, { x: p.x, y: p.y, vx: drag.vx, vy: drag.vy });
   } else if (tool === 'torch' && studio.torch) {
@@ -444,9 +619,6 @@ canvas.addEventListener('pointermove', e => {
   }
 });
 
-/** release speed (domain units / s) above which a dragged cup is lifted */
-const FLICK = 1.2;
-
 function endDrag(e: PointerEvent) {
   if (!drag || e.pointerId !== drag.id) return;
   const d = drag;
@@ -459,28 +631,6 @@ function endDrag(e: PointerEvent) {
     manualTilt.x = manualTilt.y = 0;
     if (tilt.mode === 'sensor' && !d.moved) levelNow();
   }
-  const cup = studio.cup;
-  if (d.onCup && cup) {
-    // let go while moving: the motion goes on. A cup on the canvas flicked
-    // away fast is lifted on the way, like sliding it off and up.
-    const fresh = performance.now() - d.t < 80;
-    const vx = fresh ? d.vx : 0,
-      vy = fresh ? d.vy : 0;
-    const v = Math.hypot(vx, vy);
-    if (cup.lifting) studio.liftCup(vx * 0.7, vy * 0.7);
-    else if (d.moved && v > FLICK) {
-      demo.stop();
-      studio.liftCup(vx * 0.7, vy * 0.7);
-      navigator.vibrate?.([8, 40, 8]);
-      return;
-    }
-  }
-  if (tool === 'cup' && d.onCup && studio.cup && !studio.cup.lifting) {
-    // freshly placed: next step is pouring into it
-    setTool('pour', false);
-    syncCupBtn();
-    hint('Hold to pour colours into the cup');
-  }
 }
 canvas.addEventListener('pointerup', endDrag);
 canvas.addEventListener('pointercancel', endDrag);
@@ -490,14 +640,6 @@ function markPouring(on: boolean) {
 }
 
 // ---------------------------------------------------------------- actions
-function lift() {
-  if (!studio.cup || studio.cup.lifting) return;
-  demo.stop();
-  studio.liftCup();
-  navigator.vibrate?.([8, 40, 8]);
-  hint('Drag to lead the cup while the paint runs out');
-}
-
 // install
 const installHelp = $('#installHelp');
 const install = initInstall([$('#installBtn'), $('[data-act="install"]')], text => {
@@ -535,18 +677,21 @@ sheet.addEventListener('click', e => {
     }
   }
   else if (act === 'install') install();
-  else if (act === 'help') {
-    startEl.hidden = false;
-    startEl.classList.remove('gone');
-  }
+  else if (act === 'help') startTutorial();
 });
 
 function onDemoChange(active: boolean) {
+  if (active) cupFill.close();
+  // (the demo ends the tutorial)
+  if (active) {
+    tutorial = null;
+    guideText = null;
+  }
   if (active) hint('Demo – touch the canvas to take over', 3000);
 }
 demo.onChange = onDemoChange;
 
-// keyboard (desktop): 1–6 paints, arrows tilt, L lift
+// keyboard (desktop): 1–6 paints, arrows tilt
 const keysTilt: Record<string, boolean> = { ArrowLeft: false, ArrowRight: false, ArrowUp: false, ArrowDown: false };
 addEventListener('keydown', e => {
   wake();
@@ -557,7 +702,7 @@ addEventListener('keydown', e => {
     demo.stop();
     keysTilt[e.key] = true;
     e.preventDefault();
-  } else if (e.key.toLowerCase() === 'l') lift();
+  }
 });
 addEventListener('keyup', e => {
   if (e.key in keysTilt) keysTilt[e.key] = false;
@@ -588,7 +733,7 @@ function levelNow() {
   hint('Level: this pose is flat now', 2000);
 }
 tilt.onMode = () => {
-  if (tool === 'tilt') hint(toolHint());
+  if (tool === 'tilt') guide(toolHint());
 };
 
 let wakeLock: { release(): Promise<void> } | null = null;
@@ -617,8 +762,7 @@ function begin(withDemo: boolean) {
     rebuild();
     resize();
     demo.start();
-  } else if (safe && crashedAt) hint(`Safe mode: the last start crashed (${crashedAt}). Lower quality, no glitter.`, 6000);
-  else hint(toolHint());
+  } else guide(toolHint());
 }
 $('#startBtn').addEventListener('click', () => begin(false));
 $('#demoBtn').addEventListener('click', () => begin(true));
@@ -652,24 +796,6 @@ async function saveImage() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-// ---------------------------------------------------------------- crash guard
-// A stage counts as safe after it ran for a few seconds without a crash.
-const guardStart: Record<string, number> = {};
-function guard(stage: string, now: number) {
-  if (guardStart[stage] !== undefined) return;
-  guardStart[stage] = now;
-  boot(stage);
-}
-/** called every frame: clears the mark once every started stage is old enough */
-function guardTick(now: number) {
-  const open = Object.values(guardStart).filter(t => t >= 0);
-  if (open.length && open.every(t => now - t > 4000)) {
-    for (const k in guardStart) guardStart[k] = -1;
-    boot(null);
-  }
-}
-if (crashedAt) console.warn(`Pour: the last start stopped at "${crashedAt}". Safe mode${safe ? ' on' : ' off (?unsafe)'}.`);
-
 // ---------------------------------------------------------------- loop
 const DEAD = 0.03; // ~2° of hand jitter does nothing
 const GAIN = 1.7; // full tilt at about 19°
@@ -681,7 +807,6 @@ const FRAME_MS = 1000 / (+(qs.get('fps') ?? 0) || 30);
 function frame(now: number) {
   requestAnimationFrame(frame);
   if (now - last < FRAME_MS - 2) return;
-  guardTick(now);
   const rdt = Math.min((now - last) / 1000, 1 / 20);
   last = now;
   // never exceed the stable step: slow the simulation down instead
@@ -714,14 +839,13 @@ function frame(now: number) {
   // Idle: when nothing moves, the paint stops (yield stress). Then skip the
   // simulation and draw only when the view changes. Saves GPU and battery.
   const busy =
-    demo.active || !!drag || !!studio.pour || !!studio.push || !!studio.torch || !!studio.cup ||
+    demo.active || !!drag || !!studio.pour || !!studio.push || !!studio.torch || cupBusy() ||
     Math.hypot(t.tx, t.ty) > 0 || Math.hypot(t.x, t.y) > 1e-3;
   if (busy) lastBusy = now;
   const simulate = (busy || studio.dirty) && now - lastBusy < SETTLE_MS;
   if (simulate) {
     const forces = studio.update(dt);
     sim.step(dt, forces);
-    guard('simulate', now);
   } else if (Math.hypot(t.tx - t.x, t.ty - t.y) > 0) studio.update(dt);
 
   if (tilt.mode === 'sensor' && tool === 'tilt' && !demo.tilting) {
@@ -734,10 +858,12 @@ function frame(now: number) {
     const s = 1 - 0.12 * Math.min(1, m / P.tiltMax);
     canvas.style.transform = m > 1e-3 ? `scale(${s}) rotateX(${t.y * 22}deg) rotateY(${t.x * 22}deg)` : '';
   }
+  tutorialTick(rdt);
+  // tilted far enough: the step 'tilt …' is done
+  if (tool === 'tilt' && Math.hypot(t.x, t.y) > 0.25 * P.tiltMax) guideDone();
   const viewMoved = Math.hypot(view[0] - lastView[0], view[1] - lastView[1]) > 0.003;
   if (simulate || viewMoved || saveRequested || needsDraw) {
     sim.render(studio.overlay(view), canvas.width, canvas.height);
-    guard('render', now);
     lastView = view;
     needsDraw = false;
   }
@@ -746,23 +872,17 @@ function frame(now: number) {
     saveImage();
   }
 
-  syncCupBtn();
-
   const pour = studio.pour;
   sound.update({
     torchTool: tool === 'torch' && started,
     torchOn: !!studio.torch,
-    pouring: !!pour,
-    intoCup: !!pour && studio.hitsCup(pour.x, pour.y, 1.15),
+    pouring: !!pour || cupFill.pouringM !== null,
+    intoCup: cupFill.pouringM !== null,
     // only while the finger really moves (the velocity stays when it rests)
     swipe: studio.push && drag && now - drag.t < 80 ? Math.hypot(studio.push.vx, studio.push.vy) : 0,
-    cupDrag: studio.cup && !studio.cup.lifting ? Math.hypot(studio.cup.vx, studio.cup.vy) : 0,
+    cupDrag: studio.cup ? Math.hypot(studio.cup.vx, studio.cup.vy) : 0,
   });
-  const lifting = !!studio.cup?.lifting;
-  if (lifting && !wasLifting) sound.lift();
-  wasLifting = lifting;
 }
-let wasLifting = false;
 
 setTool('pour', false);
 usePalette(paletteIdx);
@@ -770,4 +890,4 @@ selectPaint(0);
 requestAnimationFrame(frame);
 
 // debugging handle
-Object.assign(window, { __pour: { get sim() { return sim; }, get studio() { return studio; }, get demo() { return demo; }, tilt, sound, P } });
+Object.assign(window, { __pour: { get sim() { return sim; }, get studio() { return studio; }, get demo() { return demo; }, cupFill, tilt, sound, P } });

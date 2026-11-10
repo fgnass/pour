@@ -39,7 +39,45 @@ float band(vec2 p, vec2 a, vec2 b, float r) {
 }
 vec2 imposedVel(vec2 p) {
   vec2 v = vec2(0.0);
-  for (int i = 0; i < 2; i++) v += uPushVel[i] * uPush[i].w * band(p, uPushA[i], uPush[i].xy, uPush[i].z);
+  for (int i = 0; i < 2; i++) {
+    float w = uPush[i].w;
+    float m = band(p, uPushA[i], uPush[i].xy, uPush[i].z);
+    if (w < 0.0) {
+      // a wall (the cup): it pushes only the paint before it, in a ring
+      // around its rim. What runs out inside stays where it lands, behind
+      // the moving cup: the wall must not shove it along to its front.
+      // The ring sweeps from where the cup was a step ago: taken at its
+      // end position only, a fast cup pushes one crescent per step.
+      w = -w;
+      vec2 a = uPushA[i], b = uPush[i].xy;
+      vec2 dir = uPushVel[i] / max(length(uPushVel[i]), 1e-6);
+      int ns = int(clamp(ceil(length(b - a) / (0.1 * uPush[i].z)), 1.0, 8.0));
+      float ring = 0.0;
+      for (int k = 0; k < 8; k++) {
+        if (k >= ns) break;
+        vec2 d = p - mix(a, b, float(k + 1) / float(ns));
+        float l = length(d);
+        ring = max(ring, smoothstep(0.62, 0.78, l / uPush[i].z) * smoothstep(-0.1, 0.4, dot(d, dir) / max(l, 1e-6))
+                         * (1.0 - smoothstep(0.7 * uPush[i].z, uPush[i].z, l)));
+      }
+      v += uPushVel[i] * w * ring;
+    } else if (w > 0.0) {
+      // a finger: the paint cannot go through it, it slides off around its
+      // rim to the sides and stays there, beside the groove. Each point is
+      // pushed away from the finger only as fast as the finger comes
+      // towards it. (Pushing all the paint along with the finger would
+      // heap it up in front without limit.)
+      vec2 a = uPushA[i], ab = uPush[i].xy - a;
+      float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
+      vec2 dir = uPushVel[i] / max(length(uPushVel[i]), 1e-6);
+      // (a little forward, so nothing stays under the finger; and away from
+      // the axis to the side the point is on, so no paint rides ahead of it
+      // on the axis and falls off in blobs along the groove)
+      vec2 q = p - a - ab * t, side = vec2(-dir.y, dir.x);
+      vec2 n = normalize(q + (dir * 0.25 + side * sign(dot(q, side)) * 0.15) * uPush[i].z);
+      v += n * max(0.0, dot(uPushVel[i], n)) * w * m;
+    }
+  }
   vec2 d = p - uSwirl.xy;
   v += uSwirl.w * vec2(-d.y, d.x) * disc(p, uSwirl.xy, uSwirl.z);
   return v;
@@ -56,8 +94,44 @@ float hAt(ivec2 c) {
 `;
 
 export const NUM_SRC = 3;
-/** colour bands of a lifted cup (source 0), see PIG_FS */
-export const NUM_BANDS = 10;
+
+// The cup's paint as label maps (one paint index per cell, 7: none): the
+// bottom (what runs out) and the top (what shows). labelAt() looks up the
+// paint at a point of the cup (-1..1, turned with the cup): each label gets
+// the weight of its cells among the 4 x 4 nearest; the strongest wins. A
+// slow warp makes the borders wind instead of following the grid.
+const CUP_LABELS = `
+precision highp usampler2D;
+uniform vec4 uCupMap;   // x, y, radius, turn
+uniform ivec2 uCupSize;
+vec3 labelAt(usampler2D t, vec2 p, vec2 centre) {
+  vec2 d = p - centre;
+  float c = cos(-uCupMap.w), s = sin(-uCupMap.w);
+  vec2 uv = vec2(c * d.x - s * d.y, s * d.x + c * d.y) / uCupMap.z;
+  vec2 g = (uv * 0.5 + 0.5) * vec2(uCupSize);
+  g += vec2(sin(g.y * 0.19 + 1.7) + 0.5 * sin(g.y * 0.47 + g.x * 0.13),
+            sin(g.x * 0.17 + 0.4) + 0.5 * sin(g.x * 0.41 - g.y * 0.11)) * 0.7;
+  g -= 0.5;
+  ivec2 b = ivec2(floor(g)) - 1;
+  float w[8];
+  for (int i = 0; i < 8; i++) w[i] = 0.0;
+  for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 4; i++) {
+      ivec2 q = b + ivec2(i, j);
+      vec2 e = vec2(q) - g;
+      w[int(texelFetch(t, clamp(q, ivec2(0), uCupSize - 1), 0).r)] += exp(-dot(e, e) * 1.2);
+    }
+  // no paint (outside the floor) only where there is no paint near at all
+  if (w[0] + w[1] + w[2] + w[3] + w[4] + w[5] + w[6] > 0.0) w[7] = 0.0;
+  int bi = 0; float sb = w[0];
+  for (int i = 1; i < 8; i++) if (w[i] > sb) { bi = i; sb = w[i]; }
+  int ci = bi; float sc = 0.0;
+  for (int i = 0; i < 8; i++) if (i != bi && w[i] > sc) { ci = i; sc = w[i]; }
+  float e = (sb - sc) / (sb + sc + 1e-6);
+  float a = ci == bi ? 1.0 : clamp(0.5 + e / (2.0 * max(fwidth(e), 1e-3)), 0.5, 1.0);
+  return vec3(float(bi), float(ci), a);
+}
+`;
 
 // Thin film flow: q = A h^3 (tilt - K grad h), with a yield stress.
 export const FLUX_FS = COMMON + FORCES + H_AT + `
@@ -82,6 +156,17 @@ void main() {
   float h = hAt(c);
   float hl = hAt(c + ivec2(-1, 0)), hr = hAt(c + ivec2(1, 0));
   float hd = hAt(c + ivec2(0, -1)), hu = hAt(c + ivec2(0, 1));
+  float s = 0.0;
+  for (int i = 0; i < ${NUM_SRC}; i++) {
+    float r = uSrc[i].z;
+    if (r > 0.0) s += uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r);
+  }
+  // no paint here and around, none coming: every flux is 0 (most of an
+  // empty canvas; this pass runs many times per frame)
+  if (max(max(h, max(hl, hr)), max(hd, hu)) <= 0.0 && s <= 0.0) {
+    o = vec4(0.0, 0.0, 0.0, 1.0);
+    return;
+  }
   float hlu = hAt(c + ivec2(-1, 1)), hru = hAt(c + ivec2(1, 1));
   float hld = hAt(c + ivec2(-1, -1)), hrd = hAt(c + ivec2(1, -1));
   float k4 = uK / (4.0 * uDx);
@@ -94,11 +179,6 @@ void main() {
   float ql = flux(hl, h, uTilt.x, tL, imposedVel(p - ex).x);
   float qu = flux(h, hu, uTilt.y, tU, imposedVel(p + ey).y);
   float qd = flux(hd, h, uTilt.y, tD, imposedVel(p - ey).y);
-  float s = 0.0;
-  for (int i = 0; i < ${NUM_SRC}; i++) {
-    float r = uSrc[i].z;
-    if (r > 0.0) s += uSrc[i].w * swept(p, uSrcA[i], uSrc[i].xy, r);
-  }
   h += -uDt / uDx * (qr - ql + qu - qd) + uDt * s;
   if (isnan(h) || isinf(h)) h = 0.0;
   o = vec4(clamp(h, 0.0, 50.0), 0.0, 0.0, 1.0);
@@ -122,8 +202,13 @@ void main() {
   float y = max(0.0, 1.0 - uTau / (hc * length(F) + 1e-6));
   // mean velocity = flux / thickness. The flux uses the capped thickness, so
   // divide by the real one: thick paint must not carry its colour faster
-  // than the paint itself moves.
-  vec2 u = uA * hc * hc * hc / max(hm, 1e-3) * F * y + imposedVel(p) * step(0.02, hm);
+  // than the paint itself moves. At the edge of a puddle that is the thin
+  // paint of this cell (not the thicker neighbour): there the paint moves
+  // fastest, and its colour must keep up with it, or the edge runs ahead
+  // without pigment (a white rim).
+  // (the pushed paint fades in over a little thickness: a hard step here
+  // would print the coarse grid into the colours)
+  vec2 u = uA * hc * hc * hc / max(min(hm, max(h, 0.15 * hm)), 1e-3) * F * y + imposedVel(p) * smoothstep(0.01, 0.04, hm);
   float m = length(u);
   if (m > 1.5) u *= 1.5 / m;
   o = vec4(u, h, texelFetch(uH0, c, 0).r);
@@ -167,6 +252,9 @@ void finish(vec4 c, float gold, out float irid, out vec3 sheen, out float metal,
 }
 `;
 
+// scale of the cells' push potential in the mask (see MASK_FS)
+const CELL_PHI = '1000.0';
+
 // Torch: the hot surface flows away from the flame (Marangoni flow), in
 // domain units / s. Shared by the surface pigments and the glitter.
 const TORCH_FLOW = `
@@ -180,7 +268,7 @@ vec2 marangoni(vec2 p) {
 
 // Pigment advection. S: surface colours, U: submerged colours,
 // G: gold (x surface, y submerged).
-export const PIG_FS = COMMON + HASH + TORCH_FLOW + `
+export const PIG_FS = COMMON + FORCES + HASH + TORCH_FLOW + CUP_LABELS + `
 uniform sampler2D uS, uU, uG, uV, uMask;
 uniform vec2 uSize, uDom;
 uniform float uDt, uSurfK, uSubK, uRise, uSharpen, uTime;
@@ -191,17 +279,14 @@ uniform vec4 uSrcU[${NUM_SRC}];
 uniform vec2 uSrcG[${NUM_SRC}];
 uniform float uSrcStreak[${NUM_SRC}];
 uniform float uSrcPlug[${NUM_SRC}];
-// A lifted cup (source 0) lets out its whole cross-section at once: the
-// pours lie in rings in the cup, so the paint comes out in bands by distance
-// from the path of the cup. Standing still that gives rings; moving, stripes
-// along the path. Oldest (outermost) band first; uBandR is the outer radius
-// of each band as a fraction of the source radius.
-uniform int uBandN;
-uniform vec3 uBandDir; // direction the cup moves in (x, y), how much it moves (0..1)
-uniform float uBandR[${NUM_BANDS}];
-uniform vec4 uBandS[${NUM_BANDS}];
-uniform vec4 uBandU[${NUM_BANDS}];
-uniform vec2 uBandG[${NUM_BANDS}];
+// The cup (source 0, when uCupOn): the paint that seeps out at a place is
+// the paint at the bottom of the cup there (its bottom map).
+uniform float uCupOn;
+uniform usampler2D uCupBot;
+uniform vec4 uLabS[8];  // pigments of each paint (label)
+uniform vec2 uLabG[8];
+uniform float uCupSub;  // share that goes below the paint already there
+uniform int uCupFallback; // the most common paint left at the bottom
 layout(location = 0) out vec4 oS;
 layout(location = 1) out vec4 oU;
 layout(location = 2) out vec4 oG;
@@ -243,8 +328,16 @@ void main() {
   vec2 p = x * uDom;
   vec2 v1 = texture(uV, x).xy / uDom;
   vec2 v2 = texture(uV, x - 0.5 * uDt * uSurfK * v1).xy / uDom;
-  vec2 xs = x - uDt * (uSurfK * v2 + marangoni(p) / uDom);
-  vec2 xu = x - uDt * uSubK * v2;
+  // The flow moves the surface faster than the paint below it. What a
+  // finger or the cup wall pushes moves both alike: pushing paint only
+  // shifts and swirls the colours, it does not pull the layers apart.
+  vec2 imp = imposedVel(p) * smoothstep(0.01, 0.04, texture(uV, x).z) / uDom;
+  // opening cells push the surface paint out of their way (see MASK_FS)
+  vec2 me = 1.0 / uSize;
+  vec2 cellPush = -vec2(texture(uMask, x + vec2(me.x, 0.0)).g - texture(uMask, x - vec2(me.x, 0.0)).g,
+                        texture(uMask, x + vec2(0.0, me.y)).g - texture(uMask, x - vec2(0.0, me.y)).g) / (2.0 * me * uDom) / ${CELL_PHI};
+  vec2 xs = x - uDt * (uSurfK * (v2 - imp) + imp + (marangoni(p) + cellPush) / uDom);
+  vec2 xu = x - uDt * (uSubK * (v2 - imp) + imp);
 
   vec4 S = sharpen(uS, xs, cr(uS, xs));
   vec4 U = sharpen(uU, xu, cr(uU, xu));
@@ -278,19 +371,60 @@ void main() {
     float st = mix(1.0, smoothstep(0.35, 0.75, n) * 1.6, uSrcStreak[i]);
     vec4 srcS = uSrcS[i], srcU = uSrcU[i];
     vec2 srcG = uSrcG[i];
-    if (i == 0 && uBandN > 0) {
-      // standing: distance from the cup; moving: distance from the line it
-      // moves along (so a point keeps its band while the cup passes over it)
-      vec2 dc = p - uSrc[0].xy;
-      float qr = length(dc) / r;
-      float q = mix(qr, abs(dot(dc, vec2(-uBandDir.y, uBandDir.x))) / r, uBandDir.z);
-      srcS = uBandS[0]; srcU = uBandU[0]; srcG = uBandG[0];
-      for (int k = 1; k < ${NUM_BANDS}; k++) {
-        if (k >= uBandN) break;
-        float w = 1.0 - smoothstep(uBandR[k] - 0.035, uBandR[k] + 0.035, q);
-        srcS = mix(srcS, uBandS[k], w); srcU = mix(srcU, uBandU[k], w); srcG = mix(srcG, uBandG[k], w);
+    if (i == 0 && uCupOn > 0.5) {
+      // the paint that seeps out here is what lies at the bottom of the cup
+      // there (just inside the rim for the paint outside the cup)
+      // The cup moved from uSrcA to uSrc during this step: its bottom is
+      // stamped at every place on the way (at most a few cells of its map
+      // apart), each stamp with the paint below this point at that time. So
+      // a fast cup leaves the same trail as a slow one, no dots.
+      vec2 a0 = uSrcA[i], a1 = uSrc[i].xy;
+      int ns = int(clamp(ceil(12.0 * length(a1 - a0) / r), 1.0, 12.0));
+      vec4 col = vec4(0.0);
+      vec2 gold = vec2(0.0);
+      float wsum = 0.0;
+      // Only where the cup lays paint: elsewhere these lookups are costly
+      // and change nothing. Decided for whole 2 x 2 pixel groups (any pixel
+      // of a group that needs it takes the group in), so labelAt's
+      // derivatives stay valid.
+      float need = dh > 0.0 ? 1.0 : 0.0;
+      need += abs(dFdx(need)) + abs(dFdy(need));
+      need += abs(dFdx(need)) + abs(dFdy(need));
+      if (need > 0.0)
+      for (int k = 0; k < 12; k++) {
+        if (k >= ns) break;
+        vec2 ck = mix(a0, a1, (float(k) + 0.5) / float(ns));
+        // (no early exit: labelAt uses derivatives, which need all pixels)
+        float wk = disc(p, ck, r) + 1e-4;
+        vec2 rel = p - ck;
+        vec3 l = labelAt(uCupBot, ck + rel * min(1.0, uCupMap.z * 0.95 / max(length(rel), 1e-6)), ck);
+        int b = int(l.x), c = int(l.y);
+        // where the bottom has run empty, the paint that is left elsewhere
+        // in the cup comes out (paint without pigment would be white)
+        if (b == 7) b = uCupFallback;
+        if (c == 7) c = b;
+        col += wk * mix(uLabS[c], uLabS[b], l.z);
+        gold += wk * mix(uLabG[c], uLabG[b], l.z);
+        wsum += wk;
       }
-      fr = mix(fr, 1.0 - smoothstep(0.75, 0.97, max(q, qr * 0.85)), uSrcPlug[0]);
+      col /= max(wsum, 1e-6);
+      gold /= max(wsum, 1e-6);
+      {
+        // Below white paint that is there already (a white ground), in
+        // fingers (between them its surface colour goes under too). On a
+        // bare canvas or on coloured paint (its own too) it lies on top:
+        // pigment below unpigmented paint would look white.
+        float white = 1.0 - smoothstep(0.05, 0.3, dot(S, vec4(1.0)) + G.x);
+        // Only at the rim: below the cup the paint lands on the ground and
+        // stays on top; it creeps under the white where it seeps out.
+        float rim = smoothstep(0.85, 1.0, length(p - uSrc[i].xy) / uCupMap.z);
+        float under = smoothstep(0.03, 0.25, min(h, h0)) * white * rim;
+        st = mix(1.0, smoothstep(0.35, 0.75, n) * 1.6, uSrcStreak[i] * under);
+        float sub = uCupSub * under;
+        srcS = col * (1.0 - sub);
+        srcU = col * sub;
+        srcG = vec2(gold.x * (1.0 - sub), gold.x * sub);
+      }
     }
     vec4 ss = srcS * st;
     vec2 gs = vec2(srcG.x * st, srcG.y);
@@ -314,7 +448,8 @@ void main() {
   vec2 td = p - uTorch.xy;
   float tr = max(uTorch.z, 1e-4);
   float heat = uTorch.w * exp(-dot(td, td) / (tr * tr) * 2.0);
-  float t = 1.0 - exp(-uRise * (1.0 + heat) * m * uDt);
+  // (under the flame a cell opens at once: its inside shows the paint below)
+  float t = 1.0 - exp(-uRise * (1.0 + 3.0 * heat) * m * uDt);
   S += t * U; U -= t * U;
   G.x += t * G.y; G.y -= t * G.y;
 
@@ -338,7 +473,13 @@ void main() {
   o = p;
 }`;
 
-// Splats the cells into a mask: where submerged paint rises.
+// Splats the cells into a mask: where submerged paint rises. A cell opens
+// like a hole: it grows to its size in a short time and pushes the surface
+// paint out of its way, which piles up at its rim (the lacing between cells).
+// r: the hole. g: a potential whose downhill slope is that push (domain
+// units / s, times CELL_PHI): inside the hole the surface moves out in
+// proportion to the distance, outside the push falls off like the flow from
+// a source (1 / distance) and stops at e times the radius.
 export const MASK_VS = `#version 300 es
 uniform sampler2D uP;
 uniform int uPW;
@@ -346,11 +487,22 @@ uniform vec2 uDom;
 uniform float uPxPerUnit, uTime;
 out float vS;
 out float vSize;
+out float vR;    // the hole's radius / the sprite's radius
+out float vPush; // R * dR/dt * CELL_PHI
 void main() {
   vec4 p = texelFetch(uP, ivec2(gl_VertexID % uPW, gl_VertexID / uPW), 0);
-  vSize = 2.0 * p.z * uPxPerUnit + 2.0;
   vS = smoothstep(0.0, 0.4, p.w - uTime);
   if (p.z <= 0.0 || vS <= 0.0) { gl_Position = vec4(2.0, 2.0, 0.0, 1.0); gl_PointSize = 0.0; return; }
+  float r = fract(p.z), life = floor(p.z) / 100.0;
+  float age = uTime - (p.w - life);
+  float open = min(0.3, 0.5 * life);
+  float a = clamp(age / open, 0.0, 1.0);
+  float R = r * (1.0 - (1.0 - a) * (1.0 - a) * (1.0 - a));
+  float dR = a < 1.0 ? r * 3.0 * (1.0 - a) * (1.0 - a) / open : 0.0;
+  float reach = dR > 0.0 ? 2.72 * R : R;
+  vSize = 2.0 * reach * uPxPerUnit + 2.0;
+  vR = R / reach;
+  vPush = R * dR * ${CELL_PHI};
   gl_Position = vec4(p.xy / uDom * 2.0 - 1.0, 0.0, 1.0);
   gl_PointSize = vSize;
 }`;
@@ -358,13 +510,18 @@ export const MASK_FS = `#version 300 es
 precision highp float;
 in float vS;
 in float vSize;
+in float vR;
+in float vPush;
 out vec4 o;
 void main() {
-  float d = length(gl_PointCoord * 2.0 - 1.0) * vSize / max(vSize - 2.0, 1.0);
-  o = vec4((1.0 - smoothstep(0.6, 1.0, d)) * vS);
+  float q = length(gl_PointCoord * 2.0 - 1.0) * vSize / max(vSize - 2.0, 1.0);
+  float d = q / max(vR, 1e-4);
+  float hole = (1.0 - smoothstep(0.75, 1.0, d)) * vS;
+  float phi = d < 1.0 ? 1.0 + 0.5 * (1.0 - d * d) : max(0.0, 1.0 - log(d));
+  o = vec4(hole, phi * vPush, 0.0, 0.0);
 }`;
 
-export const RENDER_FS = COMMON + HASH + FINISH + `
+export const RENDER_FS = COMMON + HASH + FINISH + CUP_LABELS + `
 uniform sampler2D uV, uS, uU, uG;
 uniform vec2 uDom, uPSize;
 uniform float uDx;       // thickness cell size (domain units)
@@ -372,15 +529,42 @@ uniform vec4 uTorch;     // x, y, radius, active
 uniform vec2 uView;      // tilt of the board relative to the viewer
 uniform float uPx;       // domain units per screen pixel
 uniform vec4 uCup;       // x, y, radius, alpha
-uniform float uCupFill;
-uniform vec4 uRing[10];  // colour rings in the cup: x, y, radius, seed (oldest first)
-uniform vec3 uRingCol[10];
-uniform int uRingN;
+uniform vec2 uCupSlosh;  // tilt of the paint's surface in the cup (canvas axes)
+uniform float uCupLift;  // 1: the cup is held above the canvas (a wider, softer shadow)
+uniform usampler2D uCupTop; // the paint on top in the cup (see CUP_LABELS)
+uniform vec3 uLabCol[8];
 uniform vec4 uStream;    // x, y, radius, active
 uniform vec3 uStreamCol;
 out vec4 o;
 
 vec3 toLin(vec3 c) { return pow(c, vec3(2.2)); }
+
+// The cup's paint like labelAt (CUP_LABELS), but soft: the paints near p mixed by their weights (liquid
+// paint in the cup, seen from above). sharp > 1 makes the borders narrower.
+vec3 labelMix(usampler2D t, vec2 p, vec2 centre, float sharp, out float full) {
+  vec2 d = p - centre;
+  float c = cos(-uCupMap.w), s = sin(-uCupMap.w);
+  vec2 uv = vec2(c * d.x - s * d.y, s * d.x + c * d.y) / uCupMap.z;
+  vec2 g = (uv * 0.5 + 0.5) * vec2(uCupSize);
+  g += vec2(sin(g.y * 0.19 + 1.7) + 0.5 * sin(g.y * 0.47 + g.x * 0.13),
+            sin(g.x * 0.17 + 0.4) + 0.5 * sin(g.x * 0.41 - g.y * 0.11)) * 0.7;
+  g -= 0.5;
+  ivec2 b = ivec2(floor(g)) - 1;
+  vec3 col = vec3(0.0);
+  float sum = 0.0, none = 0.0;
+  for (int j = 0; j < 4; j++)
+    for (int i = 0; i < 4; i++) {
+      ivec2 q = b + ivec2(i, j);
+      vec2 e = vec2(q) - g;
+      float w = exp(-dot(e, e) * 1.2 * sharp);
+      uint m = texelFetch(t, clamp(q, ivec2(0), uCupSize - 1), 0).r;
+      if (m == 7u) { none += w; continue; }
+      col += w * toLin(uLabCol[m]);
+      sum += w;
+    }
+  full = sum / max(sum + none, 1e-6);
+  return col / max(sum, 1e-6);
+}
 
 vec3 paintMix(vec4 c, float gold) {
   // tinting strength: a little pigment colours a lot of white
@@ -397,7 +581,21 @@ vec3 paintMix(vec4 c, float gold) {
   return exp(lg) * 0.7 + lin * 0.3;
 }
 
-float hS(vec2 uv) { return texture(uV, uv).z; }
+// Thickness, smoothed with a cubic B-spline (4 linear taps): plain linear
+// filtering shows the coarse thickness grid as steps wherever the paint
+// ends abruptly (the wall of a groove a finger leaves)
+float hS(vec2 uv) {
+  vec2 sz = vec2(textureSize(uV, 0));
+  vec2 t = uv * sz - 0.5, i = floor(t), f = t - i;
+  vec2 f2 = f * f, f3 = f2 * f;
+  vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+  vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+  vec2 w3 = f3 / 6.0;
+  vec2 g0 = w0 + w1, g1 = 1.0 - g0;
+  vec2 a = (i - 0.5 + w1 / g0) / sz, b = (i + 1.5 + w3 / g1) / sz;
+  return g0.y * (g0.x * texture(uV, a).z + g1.x * texture(uV, vec2(b.x, a.y)).z)
+       + g1.y * (g0.x * texture(uV, vec2(a.x, b.y)).z + g1.x * texture(uV, b).z);
+}
 float pigSum(vec2 uv) { return dot(texture(uS, uv), vec4(1.0)) + texture(uG, uv).x; }
 
 // soft-box reflection
@@ -468,24 +666,31 @@ void main() {
   if (uCup.w > 0.0) {
     vec2 d2 = p - uCup.xy;
     float d = length(d2), R = uCup.z;
-    float sh = 1.0 - smoothstep(R * 0.95, R * 1.35, length(d2 - vec2(0.012, -0.018)));
-    col *= 1.0 - 0.25 * sh * step(R, d) * uCup.w;
+    vec2 so = mix(vec2(0.012, -0.018), vec2(0.04, -0.06), uCupLift);
+    float sh = 1.0 - smoothstep(R * mix(0.95, 0.8, uCupLift), R * mix(1.35, 1.6, uCupLift), length(d2 - so));
+    col *= 1.0 - mix(0.25, 0.18, uCupLift) * sh * step(R, d) * uCup.w;
     float inside = 1.0 - smoothstep(R * 0.93, R * 0.95, d);
-    // contents: newer paint pushes the older paint outwards into rings
-    vec3 contents = toLin(uRingN > 0 ? uRingCol[0] : vec3(0.93));
-    for (int i = 1; i < 10; i++) {
-      if (i >= uRingN) break;
-      vec2 q = p - uRing[i].xy;
-      float a = atan(q.y, q.x), sd = uRing[i].w;
-      float rr = uRing[i].z * (1.0 + 0.07 * sin(3.0 * a + sd) + 0.04 * sin(5.0 * a + 2.3 * sd));
-      float e = length(q) - rr;
-      float m = 1.0 - smoothstep(-uPx, uPx, e);
-      contents = mix(contents, toLin(uRingCol[i]), m);
-      contents *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, uPx * 2.5, abs(e)));
-    }
-    contents *= 0.85 + 0.15 * (1.0 - d / R);
-    col = mix(col, contents, inside * uCupFill * 0.9 * uCup.w);
-    col = mix(col, col * 0.92 + 0.06, inside * uCup.w * 0.6);
+    // contents: the paint on top, as seen in the fill view. Liquid paint
+    // has no hard borders: the colours blend into each other.
+    float full;
+    vec3 contents = labelMix(uCupTop, p, uCupMap.xy, 0.8, full);
+    full = smoothstep(0.08, 0.35, full);
+    // the surface: tilted while the paint sloshes, and rising at the wall
+    // (meniscus); it catches the light
+    vec2 dl = d2 / (R * 0.93);
+    // (capped at the rim below: far outside, exp() would give inf, and
+    // inf * 0 = NaN blacks out the whole canvas)
+    float rr = length(dl);
+    vec2 sg = uCupSlosh * 3.0 + dl / max(rr, 1e-4) * 0.9 * exp(min(rr - 1.0, 0.0) / 0.07);
+    vec3 ns = normalize(vec3(-sg, 1.0));
+    contents *= (0.86 + 0.14 * max(dot(ns, L), 0.0) / L.z) * (0.92 + 0.08 * (1.0 - rr));
+    // a soft window highlight that moves as the surface tilts
+    vec2 hp = dl - vec2(-0.32, 0.36) + uCupSlosh * 4.0;
+    float hl = exp(-dot(hp * vec2(1.0, 1.6), hp * vec2(1.0, 1.6)) / 0.035);
+    // and a bright line where the meniscus faces the light
+    float ml = exp(min(rr - 1.0, 0.0) / 0.035) * max(0.0, dot(dl / max(rr, 1e-4), normalize(L.xy)));
+    contents += vec3(0.22) * hl + vec3(0.18) * ml;
+    col = mix(col, contents, inside * min(full, 1.0) * uCup.w);
     float px = uPx;
     float rim = 1.0 - smoothstep(px * 0.6, px * 2.2, abs(d - R));
     float rim2 = 1.0 - smoothstep(px * 0.4, px * 1.4, abs(d - R * 0.93));
@@ -511,6 +716,23 @@ void main() {
   }
 
   o = vec4(pow(max(col, 0.0), vec3(1.0 / 2.2)), 1.0);
+}`;
+
+// The thickest paint in each block of 16 x 16 cells (for the time step).
+export const MAXH_FS = `#version 300 es
+precision highp float;
+uniform sampler2D uH;
+uniform ivec2 uN;
+out vec4 o;
+void main() {
+  ivec2 b = ivec2(gl_FragCoord.xy) * 16;
+  float m = 0.0;
+  for (int j = 0; j < 16; j++)
+    for (int i = 0; i < 16; i++) {
+      ivec2 c = b + ivec2(i, j);
+      if (c.x < uN.x && c.y < uN.y) m = max(m, texelFetch(uH, c, 0).r);
+    }
+  o = vec4(m, 0.0, 0.0, 1.0);
 }`;
 
 export const CLEAR_FS = `#version 300 es

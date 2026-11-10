@@ -1,6 +1,7 @@
-// Scripted open cup pour: one cup set half into fresh white, the colours
-// poured in, dragged off in a spiral and lifted on the way; an edge smeared,
+// Scripted open cup pour: one cup set half into fresh white, filled with
+// colours, dragged off in a spiral so the paint runs out; an edge smeared,
 // then tilt to spread the paint, and the torch to bring up cells.
+import { CupContent } from './cupcontent';
 import type { Studio } from './model';
 import { P } from './sim/sim';
 
@@ -48,6 +49,7 @@ export class Demo {
     s.pour = null;
     s.push = null;
     s.torch = null;
+    s.cup = null;
     this.tick();
     this.onChange?.(false);
   }
@@ -67,32 +69,31 @@ export class Demo {
     s.pour = { m: 0, x: white[0], y: white[1] };
     await this.wait(1.8);
     s.pour = null;
-    const cup = s.placeCup(x, y);
-    s.pour = { m: 0, x, y };
-    await this.wait(0.6);
-    for (const [m, d] of [
-      [1, 1.1],
-      [2, 1.1],
-      [3, 0.45],
-      [4, 1.1],
-      [5, 1.1],
-    ]) {
-      // not always the exact middle: the rings in the cup come out uneven
-      s.pour = { m, x: x + (Math.random() - 0.5) * 0.05, y: y + (Math.random() - 0.5) * 0.05 };
-      await this.wait(d);
-      s.pour = null;
-      await this.wait(0.25);
+    // fill a cup: each colour poured for a while at a spot a little off the middle
+    const content = new CupContent();
+    const r = () => (Math.random() - 0.5) * 0.8;
+    for (const [m, secs] of [[0, 1.2], [1, 0.8], [0, 0.4], [2, 0.6], [3, 0.4], [0, 0.4], [4, 0.8], [5, 0.8]]) {
+      const u = r(),
+        v = r();
+      content.pouringNew = true;
+      for (let t = 0; t < secs; t += 1 / 30) content.pour(m, u, v, 1 / 30);
     }
-    await this.wait(1.8);
-    // drag it off in a spiral, faster and faster, and lift it on the way
-    // (a flick): it glides on while the paint runs out along its path
-    await this.animate(1.8, t => {
-      const p = off(ease(t * 0.5));
+    const cup = s.placeCup(x, y, content);
+    await this.wait(1.5);
+    // drag it off in a spiral, turning it a little: the paint runs out of the
+    // open bottom along the path
+    let a0 = 0;
+    await this.animate(3.6, t => {
+      const p = off(ease(t));
       cup.tx = p[0];
       cup.ty = p[1];
+      const a = Math.sin(t * Math.PI) * 1.2;
+      s.turnCup(a - a0);
+      cup.omega = (a - a0) * 60;
+      a0 = a;
     });
-    s.liftCup(cup.vx * 1.1, cup.vy * 1.1);
-    await this.wait(2.2);
+    await this.wait(0.4);
+    s.cup = null;
   }
 
   async start() {

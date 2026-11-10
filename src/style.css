@@ -79,6 +79,54 @@ svg {
   border: 1px solid var(--line);
 }
 
+/* ------------------------------------------------------------------ cup filling */
+/* the cup seen at an angle, over the picture and under the dock */
+.cupfill {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  /* the cup stands in the scene, over the canvas */
+  touch-action: none;
+}
+.cupfill.setting .cupfill-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.cupfill[hidden] {
+  display: none;
+}
+.cupfill canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.cupfill-actions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+.cupfill-actions button {
+  font: inherit;
+  color: var(--text);
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 10px 18px;
+}
+.cupfill-actions .primary {
+  background: var(--sel);
+  color: #18191c;
+  border-color: transparent;
+}
+.cupfill-actions button:disabled {
+  opacity: 0.4;
+}
+
 /* ------------------------------------------------------------------ HUD */
 #hud {
   /* own layer above the WebGL canvas */
@@ -142,6 +190,26 @@ svg {
 }
 .hint.show {
   opacity: 1;
+}
+#hud .hint:not(.show) button {
+  pointer-events: none;
+}
+.hint-close {
+  margin: -7px -8px -7px 6px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: pointer;
+}
+.hint-close:active {
+  background: var(--glass-hi);
 }
 
 .dock {
@@ -434,7 +502,3 @@ svg {
   border-color: transparent;
 }
 
-/* the cup button turns into Lift while a cup is on the canvas */
-.seg button.lift {
-  color: var(--text);
-}

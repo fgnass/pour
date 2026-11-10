@@ -6,7 +6,6 @@
 // - cup: dragging the cup through the paint squelches, lower than a swipe.
 // - swipe: single squelches cut from a recording of slippery jelly; the
 //   faster the finger, the more of them.
-// - lift: a short burst of the pour recording.
 // Recordings (CC0, freesound.org): "Pouring oil.wav" by clement.bernardeau,
 // "Guck, Slime, slippery Jelly" by breiti.
 import swipeEvents from './swipe-events.json';
@@ -244,23 +243,6 @@ export class Sound {
     s.connect(bp).connect(g).connect(this.master);
     s.start(t, rnd(0, 2));
     s.stop(t + 0.4);
-  }
-
-  /** The paint lets go of the cup: a short, slow burst of the pour sound. */
-  lift() {
-    if (!this.ready() || !this.pourBuf) return;
-    const ctx = this.ctx!;
-    const t = ctx.currentTime;
-    const s = ctx.createBufferSource();
-    s.buffer = this.pourBuf;
-    s.playbackRate.value = POUR_RATE * 0.85;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.45, t + 0.05);
-    g.gain.setTargetAtTime(0, t + 0.5, 0.15);
-    s.connect(g).connect(this.master);
-    s.start(t, Math.random() * (this.pourBuf.duration - 2));
-    s.stop(t + 1.3);
   }
 
   private ready() {
