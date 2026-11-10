@@ -4,6 +4,9 @@
 // Positions (sources, cup, particles) are in domain units. Textures are
 // sampled with uv in [0, 1]. uDom converts between the two (p = uv * uDom).
 
+// thickness of the film that pushed paint leaves on the canvas
+const PUSH_FILM = '0.2';
+
 const COMMON = `#version 300 es
 precision highp float;
 precision highp sampler2D;
@@ -31,6 +34,7 @@ uniform vec4 uPush[2];     // x, y, radius, strength
 uniform vec2 uPushA[2];    // where the pusher was one step ago (it sweeps from there)
 uniform vec2 uPushVel[2];
 uniform vec4 uSwirl;       // x, y, radius, omega
+uniform vec2 uWall;        // size of the canvas (domain units)
 uniform vec2 uFlowBack;    // finger: flow round it, flow together behind it
 // 1 inside the band swept by a disc of radius r moving from a to b
 float band(vec2 p, vec2 a, vec2 b, float r) {
@@ -38,28 +42,41 @@ float band(vec2 p, vec2 a, vec2 b, float r) {
   float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
   return 1.0 - smoothstep(0.7 * r, r, length(p - a - ab * t));
 }
-vec2 imposedVel(vec2 p) {
+// the imposed velocity while the pushers move over the part t0..t1 of
+// their sweep this step
+vec2 imposedVelPart(vec2 p, float t0, float t1) {
   vec2 v = vec2(0.0);
   for (int i = 0; i < 2; i++) {
     float w = uPush[i].w;
-    float m = band(p, uPushA[i], uPush[i].xy, uPush[i].z);
+    vec2 A = mix(uPushA[i], uPush[i].xy, t0), B = mix(uPushA[i], uPush[i].xy, t1);
+    float m = band(p, A, B, uPush[i].z);
     if (w < 0.0) {
       // a wall (the cup): it pushes only the paint before it, in a ring
       // around its rim. What runs out inside stays where it lands, behind
       // the moving cup: the wall must not shove it along to its front.
-      // The ring sweeps from where the cup was a step ago: taken at its
-      // end position only, a fast cup pushes one crescent per step.
+      // The ring sweeps from where the cup was a step ago. Taken at a few
+      // positions only, a fast cup pushes one crescent per position; so the
+      // sweep is exact: a point is pushed if the front of the rim passed it
+      // during the step. The steps join without gap or overlap.
       w = -w;
-      vec2 a = uPushA[i], b = uPush[i].xy;
+      vec2 a = A, b = B;
+      float R = uPush[i].z;
       vec2 dir = uPushVel[i] / max(length(uPushVel[i]), 1e-6);
-      int ns = int(clamp(ceil(length(b - a) / (0.1 * uPush[i].z)), 1.0, 8.0));
-      float ring = 0.0;
-      for (int k = 0; k < 8; k++) {
-        if (k >= ns) break;
-        vec2 d = p - mix(a, b, float(k + 1) / float(ns));
-        float l = length(d);
-        ring = max(ring, smoothstep(0.62, 0.78, l / uPush[i].z) * smoothstep(-0.1, 0.4, dot(d, dir) / max(l, 1e-6))
-                         * (1.0 - smoothstep(0.7 * uPush[i].z, uPush[i].z, l)));
+      // the ring at the end position
+      vec2 d = p - b;
+      float l = length(d);
+      float ring = smoothstep(0.62, 0.78, l / R) * smoothstep(-0.1, 0.4, dot(d, dir) / max(l, 1e-6)) * (1.0 - smoothstep(0.7 * R, R, l));
+      // the band the front of the rim swept over during the step: a point
+      // at distance lat from the path was crossed by the middle of the
+      // ring (radius rm) when the cup was a distance back behind it, at that angle
+      vec2 ab = b - a;
+      float L = length(ab);
+      if (L > 1e-6) {
+        vec2 e = ab / L, q = p - a;
+        float lat = abs(dot(q, vec2(-e.y, e.x))), rm = 0.7 * R;
+        float back = sqrt(max(rm * rm - lat * lat, 0.0));
+        float at = dot(q, e) - back;
+        if (at >= 0.0 && at <= L) ring = max(ring, smoothstep(-0.1, 0.4, back / rm) * (1.0 - smoothstep(0.7 * R, R, lat)));
       }
       v += uPushVel[i] * w * ring;
     } else if (w > 0.0) {
@@ -68,7 +85,7 @@ vec2 imposedVel(vec2 p) {
       // pushed away from the finger only as fast as the finger comes
       // towards it. (Pushing all the paint along with the finger would
       // heap it up in front without limit.)
-      vec2 a = uPushA[i], ab = uPush[i].xy - a;
+      vec2 a = A, ab = B - a;
       float t = clamp(dot(p - a, ab) / max(dot(ab, ab), 1e-12), 0.0, 1.0);
       vec2 dir = uPushVel[i] / max(length(uPushVel[i]), 1e-6);
       // (a little forward, so nothing stays under the finger; and away from
@@ -87,7 +104,7 @@ vec2 imposedVel(vec2 p) {
       // ... and behind it runs together again from both sides and closes
       // the groove. With the backward flow at the sides this makes loops
       // that stir the colours.
-      vec2 r = p - uPush[i].xy;
+      vec2 r = p - B;
       float back = -dot(r, dir), lat = dot(r, side);
       float wake = smoothstep(0.8 * R, 1.6 * R, back) * (1.0 - smoothstep(2.0 * R, 8.0 * R, back))
                  * smoothstep(0.0, 0.7 * R, abs(lat)) * (1.0 - smoothstep(1.2 * R, 5.0 * R, abs(lat)));
@@ -96,7 +113,38 @@ vec2 imposedVel(vec2 p) {
   }
   vec2 d = p - uSwirl.xy;
   v += uSwirl.w * vec2(-d.y, d.x) * disc(p, uSwirl.xy, uSwirl.z);
+  // At the edge of the canvas no paint comes in from outside: a push there
+  // must not pull paint away from the edge (it would stretch the colours at
+  // the edge into streaks). Pushing paint over the edge is fine.
+  vec2 lo = smoothstep(0.0, 0.08, p), hi = smoothstep(0.0, 0.08, uWall - p);
+  v *= mix(hi, lo, step(0.0, v));
   return v;
+}
+vec2 imposedVel(vec2 p) { return imposedVelPart(p, 0.0, 1.0); }
+// How far the pushers move the paint at p during a step of length dt
+// (traced back from the end of the step). A fast cup moves more than the
+// width of its rim per step: in one jump each step would print one crescent,
+// so the step is cut into parts no longer than a quarter radius.
+vec2 imposedShift(vec2 p, float dt) {
+  float n = 1.0;
+  bool near = false;
+  for (int i = 0; i < 2; i++) {
+    if (uPush[i].w == 0.0) continue;
+    vec2 a = uPushA[i], ab = uPush[i].xy - a;
+    float L = length(ab), R = uPush[i].z;
+    float t = clamp(dot(p - a, ab) / max(L * L, 1e-12), 0.0, 1.0);
+    if (length(p - a - ab * t) < 9.0 * R) near = true;
+    n = max(n, ceil(L / (0.25 * R)));
+  }
+  if (uSwirl.w != 0.0 && length(p - uSwirl.xy) < uSwirl.z) near = true;
+  if (!near) return vec2(0.0);
+  int k = int(min(n, 8.0));
+  vec2 q = p;
+  for (int j = 7; j >= 0; j--) {
+    if (j >= k) continue;
+    q -= dt / float(k) * imposedVelPart(q, float(j) / float(k), float(j + 1) / float(k));
+  }
+  return p - q;
 }
 `;
 
@@ -163,7 +211,10 @@ float flux(float ha, float hb, float g, float ft, float vp) {
   float hf = min(F > 0.0 ? ha : hb, uCap);
   float y = max(0.0, 1.0 - uTau / (hf * length(vec2(F, ft)) + 1e-6));
   float q = uA * hf * hf * hf * F * y;
-  q += (vp > 0.0 ? ha : hb) * vp;
+  // Paint that is pushed (finger, cup) leaves a thin film behind: it wets
+  // the canvas. So a push never bares the canvas, also not at the edge,
+  // where no paint comes in from outside to fill up.
+  q += max((vp > 0.0 ? ha : hb) - ${PUSH_FILM}, 0.0) * vp;
   return q;
 }
 void main() {
@@ -341,21 +392,30 @@ vec4 sharpen(sampler2D t, vec2 uv, vec4 v) {
   return clamp(v + uSharpen * (v - 0.25 * (a + b + c + d)), min(lo, v), max(hi, v));
 }
 
+// mean film velocity at uv without what the pushers impose (domain units / s)
+vec2 filmVel(vec2 uv) {
+  vec4 t = texture(uV, uv);
+  return t.xy - imposedVel(uv * uDom) * smoothstep(0.01, 0.04, t.z);
+}
+
 void main() {
   vec2 x = vUv;
   vec2 p = x * uDom;
-  vec2 v1 = texture(uV, x).xy / uDom;
-  vec2 v2 = texture(uV, x - 0.5 * uDt * uSurfK * v1).xy / uDom;
   // The flow moves the surface faster than the paint below it. What a
   // finger or the cup wall pushes moves both alike: pushing paint only
-  // shifts and swirls the colours, it does not pull the layers apart.
-  vec2 imp = imposedVel(p) * smoothstep(0.01, 0.04, texture(uV, x).z) / uDom;
+  // shifts and swirls the colours, it does not pull the layers apart. So the
+  // pushed part is taken out of the velocity (at the same place it is read:
+  // taken out at another place, a fast push would leave a print of the
+  // cup's rim there, one crescent per step) and moved separately.
+  vec2 v1 = filmVel(x) / uDom;
+  vec2 v2 = filmVel(x - 0.5 * uDt * uSurfK * v1) / uDom;
   // opening cells push the surface paint out of their way (see MASK_FS)
   vec2 me = 1.0 / uSize;
   vec2 cellPush = -vec2(texture(uMask, x + vec2(me.x, 0.0)).g - texture(uMask, x - vec2(me.x, 0.0)).g,
                         texture(uMask, x + vec2(0.0, me.y)).g - texture(uMask, x - vec2(0.0, me.y)).g) / (2.0 * me * uDom) / ${CELL_PHI};
-  vec2 xs = x - uDt * (uSurfK * (v2 - imp) + imp + (marangoni(p) + cellPush) / uDom);
-  vec2 xu = x - uDt * (uSubK * (v2 - imp) + imp);
+  vec2 shift = imposedShift(p, uDt) * smoothstep(0.01, 0.04, texture(uV, x).z) / uDom;
+  vec2 xs = x - uDt * (uSurfK * v2 + (marangoni(p) + cellPush) / uDom) - shift;
+  vec2 xu = x - uDt * uSubK * v2 - shift;
 
   vec4 S = sharpen(uS, xs, cr(uS, xs));
   vec4 U = sharpen(uU, xu, cr(uU, xu));

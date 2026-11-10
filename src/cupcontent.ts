@@ -154,9 +154,13 @@ export class CupContent {
     }
     const sg = this.seg!;
     // a full cup: as much runs out at the bottom as comes in at the top
-    // (the oldest paint, from the bottom of every column)
+    // (the oldest paint, from the bottom of every column). Each column loses
+    // the same share of its height, like in drain(): taken evenly, the low
+    // columns at the wall would run empty first, and the wall would change
+    // its colour all at once.
     if (full) {
-      for (const c of sg.base) if (c) takeBottom(c, FILL_RATE * dt);
+      const f = Math.min(1, (FILL_RATE * dt * this.n) / Math.max(sg.baseSum, 1e-6));
+      for (const c of sg.base) if (c) takeBottom(c, c.reduce((a, l) => a + l.h, 0) * f);
       sg.baseSum = sg.base.reduce((a, c) => a + (c ? c.reduce((b, l) => b + l.h, 0) : 0), 0);
     }
     // poured volume (cup units: the floor is the unit disc, full = 1 high)
@@ -206,7 +210,14 @@ export class CupContent {
       // distance from the spot to the wall in this direction
       const pd = pu * ex + pv * ey;
       const rw = -pd + Math.sqrt(Math.max(0, pd * pd - (pu * pu + pv * pv - 1)));
-      const a = Math.min(Math.sqrt(a2), rw * 0.995);
+      // The disc stops short of the wall: grown up to it, the ring of older
+      // paint before it would get so thin that the wall shows all its
+      // layers one after the other within a moment. What does not fit in
+      // the disc spreads over the paint around it, a layer on top that
+      // grows up along the wall.
+      const aMax = rw * 0.8;
+      const a = Math.min(Math.sqrt(a2), aMax);
+      const spill = NEW_THICK * 0.5 * Math.max(0, a2 - aMax * aMax);
       if (d < a) {
         // the new paint, down to the depth it reached, on what was below it
         // there (once the disc fills the whole cup, it gets thicker)
@@ -226,6 +237,9 @@ export class CupContent {
         if (!c.length) {
           pushTop(c, sg.m, NEW_THICK * Math.max(1, a2) * 0.5);
           disc.push([k, NEW_THICK * Math.max(1, a2) * 0.5]);
+        } else if (spill > 0) {
+          pushTop(c, sg.m, spill);
+          disc.push([k, spill]);
         }
         this.cols[k] = c;
       }

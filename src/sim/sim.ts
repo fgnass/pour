@@ -342,6 +342,7 @@ export class Sim {
     gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
     gl.uniform2f(p.uni.uFlowBack, P.flowRound, P.flowTogether);
+    gl.uniform2f(p.uni.uWall, ...this.dom);
   }
   /** pushers sweep from where they were a step ago: each substep gets its part */
   private setPushPart(p: Program, f: Forces, t0: number, t1: number) {

@@ -328,10 +328,11 @@ export class Studio {
       this.cupMap = cupMap;
       if (this.cupMapsDirty) this.syncCupMaps(cup);
       // the cup wall drags paint along (negative strength: a wall, see
-      // imposedVel). Empty, it stays on the canvas and pushes the paint
-      // aside like a big finger (see Swipe), until another tool is taken.
+      // imposedVel). Empty, it stays on the canvas and pushes the paint the
+      // same way, until another tool is taken: an empty cup is no stronger
+      // than a full one.
       if (!cup.lifted) {
-        push[0] = level > 0.003 ? [cup.x, cup.y, cup.R * 1.35, -0.9] : [cup.x, cup.y, cup.R * 1.05, 1.0];
+        push[0] = [cup.x, cup.y, cup.R * 1.35, -0.9];
         pushVel[0] = clampVel(cup.vx, cup.vy);
         cupFrom = [ox, oy];
       }
