@@ -101,13 +101,13 @@ vec2 imposedVelPart(vec2 p, float t0, float t1) {
       vec2 e = q / l;
       float k = (R * R) / (l * l) * (1.0 - smoothstep(2.0 * R, 4.0 * R, l)) * smoothstep(0.9 * R, 1.3 * R, l);
       v += uFlowBack.x * w * k * smoothstep(-0.5, 0.2, dot(e, dir)) * (2.0 * dot(U, e) * e - U);
-      // ... and behind it runs together again from both sides and closes
-      // the groove. With the backward flow at the sides this makes loops
-      // that stir the colours.
+      // ... and behind it only the walls of the groove slump back in: the
+      // groove stays open for a moment and fills slowly from its edges. (A
+      // wide pull from both sides sucks the paint together like dough.)
       vec2 r = p - B;
       float back = -dot(r, dir), lat = dot(r, side);
-      float wake = smoothstep(0.8 * R, 1.6 * R, back) * (1.0 - smoothstep(2.0 * R, 8.0 * R, back))
-                 * smoothstep(0.0, 0.7 * R, abs(lat)) * (1.0 - smoothstep(1.2 * R, 5.0 * R, abs(lat)));
+      float wake = smoothstep(1.0 * R, 3.0 * R, back) * (1.0 - smoothstep(4.0 * R, 12.0 * R, back))
+                 * smoothstep(0.3 * R, 0.8 * R, abs(lat)) * (1.0 - smoothstep(1.1 * R, 1.8 * R, abs(lat)));
       v -= side * sign(lat) * uFlowBack.y * w * sp * wake;
     }
   }
@@ -197,9 +197,17 @@ vec3 labelAt(usampler2D t, vec2 p, vec2 centre) {
 }
 `;
 
-// Thin film flow: q = A h^3 (tilt - K grad h), with a yield stress.
+// Thin film flow: q = A mob(h) (tilt - K grad h), with a yield stress.
 export const FLUX_FS = COMMON + FORCES + H_AT + `
 uniform float uDt, uDx, uA, uK, uTau, uCap;
+// Mobility: flux per unit of force. A plain film goes as h^3 (its mean
+// speed as h^2), so a thin film all but stops: a blob could never cover the
+// canvas. Here the mean speed grows in proportion to the thickness while the
+// paint is thinner than uSlip, and levels off above it. The thickest paint
+// (uCap) moves as fast as before, and no paint changes its thickness faster
+// than before: the time step stays the same.
+uniform float uSlip;
+float mob(float h) { return uCap * (uCap + uSlip) * h * h / (h + uSlip); }
 uniform vec4 uSrc[${NUM_SRC}];      // x, y, radius, volume rate
 uniform vec2 uSrcA[${NUM_SRC}];     // start of the swept segment (= x, y when still)
 out vec4 o;
@@ -210,7 +218,7 @@ float flux(float ha, float hb, float g, float ft, float vp) {
   float F = g - uK * (hb - ha) / uDx;
   float hf = min(F > 0.0 ? ha : hb, uCap);
   float y = max(0.0, 1.0 - uTau / (hf * length(vec2(F, ft)) + 1e-6));
-  float q = uA * hf * hf * hf * F * y;
+  float q = uA * mob(hf) * F * y;
   // Paint that is pushed (finger, cup) leaves a thin film behind: it wets
   // the canvas. So a push never bares the canvas, also not at the edge,
   // where no paint comes in from outside to fill up.
@@ -254,6 +262,8 @@ void main() {
 // Mean film velocity (xy) and thickness (z, for linear sampling).
 export const VEL_FS = COMMON + FORCES + H_AT + `
 uniform float uDx, uA, uK, uTau, uCap;
+uniform float uSlip;
+float mob(float h) { return uCap * (uCap + uSlip) * h * h / (h + uSlip); }
 uniform sampler2D uH0; // thickness before this step
 out vec4 o;
 void main() {
@@ -275,7 +285,7 @@ void main() {
   // without pigment (a white rim).
   // (the pushed paint fades in over a little thickness: a hard step here
   // would print the coarse grid into the colours)
-  vec2 u = uA * hc * hc * hc / max(min(hm, max(h, 0.15 * hm)), 1e-3) * F * y + imposedVel(p) * smoothstep(0.01, 0.04, hm);
+  vec2 u = uA * mob(hc) / max(min(hm, max(h, 0.15 * hm)), 1e-3) * F * y + imposedVel(p) * smoothstep(0.01, 0.04, hm);
   float m = length(u);
   if (m > 1.5) u *= 1.5 / m;
   o = vec4(u, h, texelFetch(uH0, c, 0).r);
@@ -319,6 +329,8 @@ void finish(vec4 c, float gold, out float irid, out vec3 sheen, out float metal,
 }
 `;
 
+// how far from a torch cell it pulls in paint when no paint lies below it
+const TORCH_PULL = '0.05';
 // scale of the cells' push potential in the mask (see MASK_FS)
 const CELL_PHI = '1000.0';
 // thickness of poured paint that hides about 63 % of the paint below it
@@ -336,7 +348,8 @@ vec2 marangoni(vec2 p) {
 `;
 
 // Pigment advection. S: surface colours, U: submerged colours,
-// G: gold (x surface, y submerged).
+// G: gold (x surface, y submerged), z: 0..1, white paint lies below. Without it, "no pigment below" could mean white paint below
+// or no paint below at all (or the same colour as on top).
 export const PIG_FS = COMMON + FORCES + HASH + TORCH_FLOW + CUP_LABELS + `
 uniform sampler2D uS, uU, uG, uV, uMask;
 uniform vec2 uSize, uDom;
@@ -419,7 +432,7 @@ void main() {
 
   vec4 S = sharpen(uS, xs, cr(uS, xs));
   vec4 U = sharpen(uU, xu, cr(uU, xu));
-  vec4 G = vec4(cr(uG, xs).x, cr(uG, xu).y, 0.0, 0.0);
+  vec4 G = vec4(cr(uG, xs).x, cr(uG, xu).yz, 0.0);
 
   // new paint from sources (mass-weighted mixing). The thickness in uV already
   // holds this step's new paint: take it out, so fresh paint on a bare spot
@@ -517,6 +530,10 @@ void main() {
     // depend on the step size.)
     float opaque = i == 0 ? 0.0 : 1.0 - exp(-dh / ${POUR_OPAQUE});
     float cov = min(1.0, max(fr * (1.0 + 2.0 * fr), opaque));
+    // white paint (no pigment) that goes under: it stays below, also when
+    // more paint covers it
+    float wasWhite = 1.0 - smoothstep(0.05, 0.3, dot(S, vec4(1.0)) + G.x);
+    G.z += (1.0 - G.z) * wasWhite * cov * smoothstep(0.03, 0.2, min(h, h0));
     vec4 T = mix(S + U, ss + max(su, 0.0), fr);
     vec2 TG = vec2(mix(G.x + G.y, gs.x + max(gs.y, 0.0), fr));
     S = mix(S, ss, cov);
@@ -533,8 +550,46 @@ void main() {
   float heat = uTorch.w * exp(-dot(td, td) / (tr * tr) * 2.0);
   // (under the flame a cell opens at once: its inside shows the paint below)
   float t = 1.0 - exp(-uRise * (1.0 + 3.0 * heat) * m * uDt);
-  S += t * U; U -= t * U;
-  G.x += t * G.y; G.y -= t * G.y;
+  // Away from the flame a cell brings the covered colour up into the
+  // surface. Under the flame the hot paint below breaks through: the hole
+  // shows the paint below as it is (white below gives a white cell), and
+  // the surface paint is pushed to the rim (cellPush). The paint below is
+  // deep, so it does not run out.
+  float hk = 1.0 - exp(-heat);
+  vec4 U0 = U;
+  float G0 = G.y;
+  S += t * (1.0 - hk) * U0; U -= t * (1.0 - hk) * U0;
+  G.x += t * (1.0 - hk) * G0; G.y -= t * (1.0 - hk) * G0;
+  // What shows in the hole: the paint below, where it has pigment or is
+  // white paint (white below gives a white cell). Else (only the surface
+  // paint is there, or the same colour lies below) the hot paint pulls in
+  // paint from around the cell: the colour on a ring around it that differs
+  // most from the paint here.
+  vec4 below = vec4(U0);
+  float belowG = G0;
+  if (t * hk > 0.001) {
+    float real = max(smoothstep(0.1, 0.3, dot(U0, vec4(1.0)) + G0), smoothstep(0.3, 0.7, G.z));
+    if (real < 1.0) {
+      vec4 nS = S;
+      float nG = G.x, best = 0.0;
+      for (int k = 0; k < 8; k++) {
+        float a = float(k) * 0.785398;
+        vec2 q = x + vec2(cos(a), sin(a)) * ${TORCH_PULL} / uDom;
+        vec4 cs = texture(uS, q);
+        float cg = texture(uG, q).x;
+        vec4 d4 = abs(cs - S);
+        // (only paint with pigment: bare canvas or an open cell would make
+        // a white cell too)
+        float pig = cs.x + cs.y + cs.z + cs.w + cg;
+        float d = (d4.x + d4.y + d4.z + d4.w + abs(cg - G.x)) * smoothstep(0.1, 0.3, pig) * smoothstep(0.03, 0.1, texture(uV, q).z);
+        if (d > best) { best = d; nS = cs; nG = cg; }
+      }
+      below = mix(nS, U0, real);
+      belowG = mix(nG, G0, real);
+    }
+  }
+  S = mix(S, below, t * hk);
+  G.x = mix(G.x, belowG, t * hk);
 
   oS = clamp(S, 0.0, 1.0); oU = clamp(U, 0.0, 1.0); oG = clamp(G, 0.0, 1.0);
 }`;
@@ -714,7 +769,7 @@ void main() {
   float edge = clamp(length(pgrad) * 1.6, 0.0, 1.0);
   base *= 1.0 - 0.2 * edge * smoothstep(0.1, 0.6, dot(c, vec4(1.0)));
 
-  float cover = smoothstep(0.03, 0.22, h);
+  float cover = smoothstep(0.01, 0.08, h);
   vec3 n = normalize(vec3(-(grad * 0.0035 + pgrad * 0.25 * cover), 1.0));
   n = normalize(n + vec3(uView * 0.22, 0.0));
 
@@ -872,7 +927,7 @@ void main() {
   if (q.w <= 0.0 || fade <= 0.0) return;
   vec2 uv = q.xy / uDom;
   float h = texture(uV, uv).z;
-  float cover = smoothstep(0.03, 0.22, h);
+  float cover = smoothstep(0.01, 0.08, h);
   if (cover <= 0.0) return;
   // under the cup: hidden
   if (uCup.w > 0.0 && length(q.xy - uCup.xy) < uCup.z) return;

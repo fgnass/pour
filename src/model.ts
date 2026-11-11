@@ -26,7 +26,8 @@ export const M = {
   cellRate: 3500, // cells per unit of coloured outflow
   tiltCells: 300, // cells per second while the paint flows
   torchR: 0.15, // radius of the torch flame
-  torchCells: 110, // cells per second under the flame
+  torchCells: 140, // cells per second under the flame
+  torchCellSize: 3, // torch cells are this much bigger than other cells
   torchHeat: 6, // how much faster paint rises under the flame
   // The cup wall holds the paint back: only a little seeps out under the
   // rim. Moving the cup lets more escape.
@@ -347,7 +348,7 @@ export class Studio {
 
     // the torch makes cells pop up under the flame
     const tq = this.torch;
-    if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR, [0.6, 0.8], 1.8);
+    if (tq) this.spawnCells('torch', dt, M.torchCells, tq.x, tq.y, 0, M.torchR * 0.8, [0.8, 1.0], M.torchCellSize);
 
     // a quick swipe pushes the paint along the whole way since the last step
     const pushFrom: Forces['pushFrom'] = [cupFrom ?? [push[0][0], push[0][1]], [0, 0]];

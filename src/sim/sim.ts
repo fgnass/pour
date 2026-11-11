@@ -11,14 +11,19 @@ export const P = {
   K: 1 / 600, // hydrostatic term
   tau: 0.05, // yield stress
   hCap: 2.0, // mobility cap (stability)
+  slip: 0.3, // below this thickness the paint gets slower in proportion to it (see mob() in the shaders)
   surfK: 1.4, // surface velocity / mean velocity
   subK: 0.6, // submerged velocity / mean velocity
   rise: 3.0, // how fast a cell pulls submerged paint up
   tiltMax: 0.5,
   grav: 1.6, // downhill pull per unit of tilt: how fast tilted paint runs
-  flowRound: 0.35, // a finger: the paint at its sides runs back past it
-  flowTogether: 0.4, // ... and behind it flows together again (share of the finger speed)
+  flowRound: 0.2, // a finger: the paint at its sides runs back past it
+  flowTogether: 0.06, // ... and behind it the walls of the groove slump in (share of the finger speed)
 };
+
+/** mobility of paint of thickness h (as mob() in the shaders) and its slope */
+const mob = (h: number) => (P.hCap * (P.hCap + P.slip) * h * h) / (h + P.slip);
+const dmob = (h: number) => (P.hCap * (P.hCap + P.slip) * (h * h + 2 * h * P.slip)) / (h + P.slip) ** 2;
 
 export type Source = {
   x: number;
@@ -283,7 +288,7 @@ export class Sim {
    */
   stableDt(f?: Forces, hb = P.hCap) {
     const dx = this.dx;
-    const dtDiff = (0.22 * dx * dx) / (P.A * P.K * hb ** 3);
+    const dtDiff = (0.22 * dx * dx) / (P.A * P.K * mob(hb));
     let tilt = P.tiltMax,
       vImp = MAX_IMPOSED;
     if (f) {
@@ -292,7 +297,7 @@ export class Sim {
       f.push.forEach((p, i) => (vImp = Math.max(vImp, Math.hypot(...f.pushVel[i]) * Math.abs(p[3]))));
       vImp = Math.max(vImp, Math.abs(f.swirl[3]) * f.swirl[2]);
     }
-    const dtAdv = (0.45 * dx) / (3 * P.A * hb ** 2 * tilt + 0.05);
+    const dtAdv = (0.45 * dx) / (P.A * dmob(hb) * tilt + 0.05);
     // Pushed paint leaves a cell on top of what flows out: the two shares
     // add up, so their rates add up too. (Taking only the smaller step of
     // the two lets a cell lose more than it has; cut off at 0, that makes
@@ -365,6 +370,7 @@ export class Sim {
     gl.uniform1f(p.uni.uK, P.K);
     gl.uniform1f(p.uni.uTau, P.tau);
     gl.uniform1f(p.uni.uCap, P.hCap);
+    gl.uniform1f(p.uni.uSlip, P.slip);
   }
 
   step(dt: number, f: Forces) {
