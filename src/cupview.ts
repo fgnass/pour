@@ -29,7 +29,9 @@ uniform usampler2D uWall; // label of the paint along the wall (x: around, y: up
 uniform ivec2 uTopSize;
 uniform vec3 uCol[8];     // colours of the labels (7: none)
 uniform vec4 uStream;     // x, z (where it lands), radius, on
-uniform float uStreamM;   // label of the paint in the stream
+uniform float uStreamM;   // label of the paint in the stream ...
+uniform float uStreamM2;  // ... and of a new paint above this height (it joined the running stream)
+uniform float uStreamSplit;
 // The stream falls from above: each part of it left the hand a little
 // earlier the lower it is, so it trails behind the hand's moves. Its centre
 // (x, z) and radius at 16 heights from the surface (uLevel) up to
@@ -200,7 +202,7 @@ void main() {
       float ts = (c.y + h - ro.z) / rd.z;
       if (ts < tScene) {
         vec3 n = normalize(vec3(dx, 0.0, h));
-        vec3 base = uCol[int(uStreamM)];
+        vec3 base = mix(uCol[int(uStreamM)], uCol[int(uStreamM2)], smoothstep(uStreamSplit - 0.04, uStreamSplit + 0.04, yy));
         vec3 hv = normalize(LIGHT - rd);
         // it comes from above the screen
         col = base * (0.6 + 0.4 * max(dot(n, LIGHT), 0.0)) + vec3(pow(max(dot(n, hv), 0.0), 30.0) * 0.5);
@@ -307,7 +309,7 @@ export class CupView {
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) ?? 'cup program');
     this.prog = p;
-    for (const n of ['uRes', 'uDpr', 'uCenter', 'uScale', 'uLevel', 'uTime', 'uTop', 'uWall', 'uTopSize', 'uCol', 'uStream', 'uStreamM', 'uStreamPath', 'uLanded', 'uA'])
+    for (const n of ['uRes', 'uDpr', 'uCenter', 'uScale', 'uLevel', 'uTime', 'uTop', 'uWall', 'uTopSize', 'uCol', 'uStream', 'uStreamM', 'uStreamM2', 'uStreamSplit', 'uStreamPath', 'uLanded', 'uA'])
       this.uni[n] = gl.getUniformLocation(p, n);
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
@@ -337,7 +339,7 @@ export class CupView {
     this.topSize = size;
   }
 
-  render(o: { cx: number; cy: number; scale: number; dpr: number; level: number; time: number; angle: number; colors: number[][]; stream: { path: number[]; m: number; landed: number } | null }) {
+  render(o: { cx: number; cy: number; scale: number; dpr: number; level: number; time: number; angle: number; colors: number[][]; stream: { path: number[]; m: number; m2: number; split: number; landed: number } | null }) {
     const gl = this.gl;
     const c = this.canvas;
     gl.viewport(0, 0, c.width, c.height);
@@ -367,6 +369,8 @@ export class CupView {
     const s = o.stream;
     gl.uniform4f(u.uStream, s?.path[0] ?? 0, s?.path[1] ?? 0, s?.path[2] ?? 0, s ? 1 : 0);
     gl.uniform1f(u.uStreamM, s?.m ?? 0);
+    gl.uniform1f(u.uStreamM2, s?.m2 ?? 0);
+    gl.uniform1f(u.uStreamSplit, s?.split ?? 99);
     gl.uniform3fv(u.uStreamPath, s?.path ?? new Array(48).fill(0));
     gl.uniform1f(u.uLanded, s?.landed ?? 0);
     gl.activeTexture(gl.TEXTURE0);

@@ -45,7 +45,14 @@ export class CupFill {
   private landing = false;
   /** the hand that pours: it follows the finger (aim) smoothly */
   private hand = { u: 0, v: 0 };
-  private str: { m: number; path: [number, number, number][]; t0: number; t1: number | null } | null = null;
+  private str: {
+    /** the paint at the hand now; `ms`: since when each paint left the hand (a new paint can join a running stream) */
+    m: number;
+    ms: [number, number][];
+    path: [number, number, number][];
+    t0: number;
+    t1: number | null;
+  } | null = null;
 
   constructor(
     readonly el: HTMLElement,
@@ -125,10 +132,18 @@ export class CupFill {
   start(m: number) {
     this.pouringM = m;
     const now = performance.now() / 1000;
-    // (a new colour, or the old stream gone: a new stream from the top)
-    if (!this.str || this.str.m !== m || this.str.t1 !== null) {
+    const st = this.str;
+    if (st && st.t1 === null) {
+      // another paint while the stream runs: it goes on, the new paint
+      // follows the old one down
+      if (st.m !== m) {
+        st.m = m;
+        st.ms.push([now, m]);
+      }
+    } else {
+      // (no stream, or the old one stopped: a new stream from the top)
       this.hand = { ...this.aim };
-      this.str = { m, path: [[now, this.hand.u, this.hand.v]], t0: now, t1: null };
+      this.str = { m, ms: [[now, m]], path: [[now, this.hand.u, this.hand.v]], t0: now, t1: null };
     }
     this.kick();
     this.onChange?.();
@@ -141,6 +156,14 @@ export class CupFill {
     this.dirty = true;
     this.kick();
     this.onChange?.();
+  }
+
+  /** the paint that left the hand at time t */
+  private mAt(t: number) {
+    const ms = this.str!.ms;
+    let i = ms.length - 1;
+    while (i > 0 && ms[i][0] > t) i--;
+    return ms[i][1];
   }
 
   /** where the hand was at time t (u, v) */
@@ -213,7 +236,9 @@ export class CupFill {
         if (!this.landing) this.content.pouringNew = true;
         this.landing = true;
         const [u, v] = this.smoothAimAt(tl, 0.12);
-        this.content.pour(st.m, u, v, dt * e);
+        this.content.pour(this.mAt(tl), u, v, dt * e);
+        // (paints that have landed completely are not needed any more)
+        while (st.ms.length > 1 && st.ms[1][0] <= tl) st.ms.shift();
       } else if (this.landing) {
         this.landing = false;
         this.content.commit();
@@ -256,6 +281,16 @@ export class CupFill {
     this.actions.style.top = `${cy - foot.sy * s + 26}px`;
     this.dirty = true;
     this.render();
+  }
+
+  /** where on the screen (CSS px) a finger aims the stream at (u, v) */
+  screenOf(u: number, v: number) {
+    const { cx, cy, s } = this.geo;
+    const L = this.levelY();
+    const rad = CUP.RB + ((CUP.RT - CUP.RB) * L) / CUP.HC;
+    const p = toScreen(u * rad, L, -v * rad);
+    const r = this.canvas.getBoundingClientRect();
+    return { x: r.left + cx + p.sx * s, y: r.top + cy - p.sy * s };
   }
 
   /** height of the paint surface (cup units) */
@@ -316,7 +351,11 @@ export class CupFill {
         const taper = Math.pow(1 + (STREAM_TOP - y) / 0.6, -0.25);
         path.push(u * r, -v * r, R_TOP * taper * Math.sqrt(this.emitted(t - age)));
       }
-      stream = { path, m: st.m, landed: this.emitted(t - FALL) };
+      // a new paint that joined the running stream: below the height it has
+      // fallen to so far, the old paint still falls
+      const pending = st.ms.find(c => c[0] > t - FALL);
+      const split = pending ? STREAM_TOP - (STREAM_TOP - level) * ((t - pending[0]) / FALL) ** 2 : STREAM_TOP + 1;
+      stream = { path, m: this.mAt(t - FALL), m2: st.m, split, landed: this.emitted(t - FALL) };
     }
     this.view.render({ cx, cy, scale: s, dpr, angle, level, time: performance.now() / 1000, colors: Array.from({ length: 8 }, (_, i) => (i === 7 ? [0.86, 0.86, 0.84] : (MATS[i]?.rgb ?? [0.86, 0.86, 0.84]))), stream });
   }

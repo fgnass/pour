@@ -502,3 +502,22 @@ svg {
   border-color: transparent;
 }
 
+
+/* the demo's finger: where it touches */
+.finger {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 34px;
+  margin: -17px 0 0 -17px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.28);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 50;
+}
+.finger[hidden] {
+  display: none;
+}

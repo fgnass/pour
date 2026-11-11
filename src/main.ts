@@ -1,6 +1,6 @@
 import './style.css';
 import { CupFill } from './cupfill';
-import { Demo } from './demo';
+import { Demo, type DemoUI } from './demo';
 import { initInstall } from './install';
 import { mountIcons } from './icons';
 import { M as MODEL, Studio } from './model';
@@ -36,6 +36,10 @@ $('#cupSet').addEventListener('click', () => {
     guide('Touch the cup to pour paint into it first');
     return;
   }
+  demo.stop();
+  setCupDown();
+});
+function setCupDown(then?: () => void) {
   // the cup turns to the view from above and moves over the middle of the
   // canvas; there the canvas takes it over (held up: a tap sets it down)
   const r = (MODEL.cupR / sim.dom[0]) * layout.w;
@@ -48,8 +52,9 @@ $('#cupSet').addEventListener('click', () => {
     cupReady = true;
     wake();
     guide(toolHint());
+    then?.();
   });
-});
+}
 const paintsBar = $('.dock .paints');
 const sheet = $('#sheet');
 const startEl = $('#start');
@@ -129,7 +134,32 @@ try {
   throw e;
 }
 let studio = new Studio(sim);
-let demo = new Demo(studio);
+// the demo drives the app as a user would; the finger dot shows where it touches
+const fingerEl = $('#finger');
+const demoUI: DemoUI = {
+  cupFill,
+  tool: t => {
+    tool = t;
+    markTool(t);
+  },
+  paint: m => {
+    paint = m;
+    paintsEl.querySelectorAll<HTMLElement>('.swatch').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.m! === m)));
+  },
+  say: text => {
+    clearTimeout(hintTimer);
+    showHint(text);
+  },
+  finger: p => {
+    fingerEl.hidden = !p;
+    if (!p) return;
+    const x = p.screen ? p.x : layout.left + (p.x / sim.dom[0]) * layout.w;
+    const y = p.screen ? p.y : layout.top + (1 - p.y / sim.dom[1]) * layout.h;
+    fingerEl.style.transform = `translate(${x}px, ${y}px)`;
+  },
+  cupDone: () => new Promise<void>(res => setCupDown(res)),
+};
+let demo = new Demo(studio, demoUI);
 const tilt = new TiltInput();
 // dev only: script the studio from the console (used to make the app icon)
 if (import.meta.env.DEV) Object.assign(window, { dev: { studio: () => studio, demo: () => demo, sim: () => sim, palettes: PALETTES, palette: (i: number) => usePalette(i), wake: () => wake() } });
@@ -139,7 +169,7 @@ function rebuild() {
   sim.dispose();
   sim = new Sim(g, viewAspect(), quality);
   studio = new Studio(sim);
-  demo = new Demo(studio);
+  demo = new Demo(studio, demoUI);
   demo.onChange = onDemoChange;
 }
 
@@ -219,13 +249,14 @@ function hint(text: string, ms = 4000) {
 }
 /** the next step: it stays until the user does it (the tutorial has its own steps) */
 function guide(text: string) {
-  if (tutorial) return;
+  // (the demo shows its own steps)
+  if (tutorial || demo.active) return;
   guideText = text;
   showHint(text);
 }
 /** the user did what the open step asked */
 function guideDone() {
-  if (tutorial || guideText === null) return;
+  if (tutorial || demo.active || guideText === null) return;
   guideText = null;
   // (it fades out a moment after the user began; a new step stops that)
   clearTimeout(hintTimer);
@@ -377,8 +408,12 @@ function buildSwatches() {
 function selectPaint(m: number, announce = false) {
   paint = m;
   paintsEl.querySelectorAll<HTMLElement>('.swatch').forEach(b => b.setAttribute('aria-checked', String(+b.dataset.m! === m)));
-  // with the Cup tool the paints fill the cup (hold one to pour it in)
-  if (tool === 'cup') return;
+  // with the Cup tool the paints fill the cup (hold one to pour it in); a
+  // new paint while the stream runs joins it
+  if (tool === 'cup') {
+    if (cupFill.pouringM !== null) cupFill.start(m);
+    return;
+  }
   if (tool !== 'pour') setTool('pour', false);
   if (announce) guide(`${MATS[m].name} – hold to pour`);
 }
@@ -471,11 +506,15 @@ function setTool(t: Tool, announce = true) {
   tool = t;
   // a new cup: fill it first
   if (fresh) newCup(false);
+  markTool(t);
+  if (announce) guide(toolHint());
+}
+/** show t as the active tool */
+function markTool(t: Tool) {
   document.querySelectorAll<HTMLElement>('#tools button').forEach(b => b.setAttribute('aria-checked', String(b.dataset.tool === t)));
   // paints only matter while pouring or filling the cup
   paintsBar.classList.toggle('off', t !== 'pour' && t !== 'cup');
   if (t !== 'pour' && t !== 'cup') paletteSheet.hidden = true;
-  if (announce) guide(toolHint());
 }
 document.querySelectorAll<HTMLElement>('#tools button').forEach(b =>
   b.addEventListener('click', () => {
@@ -687,8 +726,14 @@ function onDemoChange(active: boolean) {
     tutorial = null;
     guideText = null;
   }
-  if (active) hint('Demo – touch the canvas to take over', 3000);
+  if (!active) {
+    // (the user took over, or the demo is at its end)
+    clearTimeout(hintTimer);
+    hintEl.classList.remove('show');
+  }
 }
+// touching the cup takes over too: the user goes on filling it
+$('#cupfill canvas').addEventListener('pointerdown', () => demo.stop(), { capture: true });
 demo.onChange = onDemoChange;
 
 // keyboard (desktop): 1–6 paints, arrows tilt
