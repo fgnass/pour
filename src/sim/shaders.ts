@@ -35,7 +35,7 @@ uniform vec2 uPushA[2];    // where the pusher was one step ago (it sweeps from 
 uniform vec2 uPushVel[2];
 uniform vec4 uSwirl;       // x, y, radius, omega
 uniform vec2 uWall;        // size of the canvas (domain units)
-uniform vec2 uFlowBack;    // finger: flow round it, flow together behind it
+uniform vec3 uFlowBack;    // finger: flow round it, flow together behind it, drag along
 // 1 inside the band swept by a disc of radius r moving from a to b
 float band(vec2 p, vec2 a, vec2 b, float r) {
   vec2 ab = b - a;
@@ -93,7 +93,13 @@ vec2 imposedVelPart(vec2 p, float t0, float t1) {
       // on the axis and falls off in blobs along the groove)
       vec2 q = p - a - ab * t, side = vec2(-dir.y, dir.x);
       vec2 n = normalize(q + (dir * 0.25 + side * sign(dot(q, side)) * 0.15) * uPush[i].z);
-      v += n * max(0.0, dot(uPushVel[i], n)) * w * m;
+      vec2 vp = n * max(0.0, dot(uPushVel[i], n)) * m;
+      // The paint sticks to the finger: what lies under it and beside it is
+      // dragged along in part. So a finger that leaves the paint pulls a
+      // tongue of it out over the edge; it does not only shove it aside.
+      float l0 = length(q);
+      float drag = uFlowBack.z * (1.0 - smoothstep(1.0 * uPush[i].z, 2.5 * uPush[i].z, l0));
+      v += (vp + drag * (uPushVel[i] - vp)) * w;
       // Ahead and at the sides the paint gives way as round a moving
       // cylinder: it runs back past the finger ...
       vec2 U = uPushVel[i];

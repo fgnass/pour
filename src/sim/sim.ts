@@ -19,6 +19,7 @@ export const P = {
   grav: 1.6, // downhill pull per unit of tilt: how fast tilted paint runs
   flowRound: 0.2, // a finger: the paint at its sides runs back past it
   flowTogether: 0.06, // ... and behind it the walls of the groove slump in (share of the finger speed)
+  fingerDrag: 0.4, // ... and the paint under and beside it is dragged along (share of the finger speed)
 };
 
 /** mobility of paint of thickness h (as mob() in the shaders) and its slope */
@@ -346,7 +347,7 @@ export class Sim {
     gl.uniform2fv(p.uni.uPushVel, f.pushVel.flat());
     gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
-    gl.uniform2f(p.uni.uFlowBack, P.flowRound, P.flowTogether);
+    gl.uniform3f(p.uni.uFlowBack, P.flowRound, P.flowTogether, P.fingerDrag);
     gl.uniform2f(p.uni.uWall, ...this.dom);
   }
   /** pushers sweep from where they were a step ago: each substep gets its part */
