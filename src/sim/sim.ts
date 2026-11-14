@@ -19,6 +19,7 @@ export const P = {
   grav: 1.6, // downhill pull per unit of tilt: how fast tilted paint runs
   flowRound: 0.2, // a finger: the paint at its sides runs back past it
   flowTogether: 0.06, // ... and behind it the walls of the groove slump in (share of the finger speed)
+  fingerClose: 0.15, // ... and closes up right behind it (share of the finger speed)
   fingerDrag: 0.4, // ... and the paint under and beside it is dragged along (share of the finger speed)
 };
 
@@ -51,6 +52,8 @@ export type Forces = {
   /** where each pusher was one step ago; the force covers the swept band */
   pushFrom?: [number, number][];
   swirl: [number, number, number, number];
+  /** where a finger was lifted a moment ago: x, y, radius, how fast the paint flows into its hole */
+  lift?: [number, number, number, number];
   src: Source[]; // NUM_SRC entries
   /** x, y, radius, strength */
   torch: [number, number, number, number];
@@ -296,7 +299,7 @@ export class Sim {
       tilt = Math.hypot(...f.tilt);
       vImp = 0;
       f.push.forEach((p, i) => (vImp = Math.max(vImp, Math.hypot(...f.pushVel[i]) * Math.abs(p[3]))));
-      vImp = Math.max(vImp, Math.abs(f.swirl[3]) * f.swirl[2]);
+      vImp = Math.max(vImp, Math.abs(f.swirl[3]) * f.swirl[2], f.lift?.[3] ?? 0);
     }
     const dtAdv = (0.45 * dx) / (P.A * dmob(hb) * tilt + 0.05);
     // Pushed paint leaves a cell on top of what flows out: the two shares
@@ -347,7 +350,8 @@ export class Sim {
     gl.uniform2fv(p.uni.uPushVel, f.pushVel.flat());
     gl.uniform2fv(p.uni.uPushA, (f.pushFrom ?? f.push.map(q => [q[0], q[1]] as [number, number])).flat());
     gl.uniform4fv(p.uni.uSwirl, f.swirl);
-    gl.uniform3f(p.uni.uFlowBack, P.flowRound, P.flowTogether, P.fingerDrag);
+    gl.uniform4fv(p.uni.uLift, f.lift ?? [0, 0, 1, 0]);
+    gl.uniform4f(p.uni.uFlowBack, P.flowRound, P.flowTogether, P.fingerDrag, P.fingerClose);
     gl.uniform2f(p.uni.uWall, ...this.dom);
   }
   /** pushers sweep from where they were a step ago: each substep gets its part */

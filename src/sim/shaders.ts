@@ -34,8 +34,9 @@ uniform vec4 uPush[2];     // x, y, radius, strength
 uniform vec2 uPushA[2];    // where the pusher was one step ago (it sweeps from there)
 uniform vec2 uPushVel[2];
 uniform vec4 uSwirl;       // x, y, radius, omega
+uniform vec4 uLift;        // a finger lifted a moment ago: x, y, radius, speed
 uniform vec2 uWall;        // size of the canvas (domain units)
-uniform vec3 uFlowBack;    // finger: flow round it, flow together behind it, drag along
+uniform vec4 uFlowBack;    // finger: flow round it, flow together behind it, drag along, close up behind it
 // 1 inside the band swept by a disc of radius r moving from a to b
 float band(vec2 p, vec2 a, vec2 b, float r) {
   vec2 ab = b - a;
@@ -115,10 +116,23 @@ vec2 imposedVelPart(vec2 p, float t0, float t1) {
       float wake = smoothstep(1.0 * R, 3.0 * R, back) * (1.0 - smoothstep(4.0 * R, 12.0 * R, back))
                  * smoothstep(0.3 * R, 0.8 * R, abs(lat)) * (1.0 - smoothstep(1.1 * R, 1.8 * R, abs(lat)));
       v -= side * sign(lat) * uFlowBack.y * w * sp * wake;
+      // The paint dragged along closes up right behind the finger, as it
+      // runs off a round fingertip: a finger that leaves the paint draws
+      // one round nose, not a tongue split by its groove.
+      float tail = smoothstep(-1.0 * R, 0.0, back) * (1.0 - smoothstep(1.0 * R, 3.0 * R, back))
+                 * smoothstep(0.0, 0.4 * R, abs(lat)) * (1.0 - smoothstep(1.5 * R, 2.5 * R, abs(lat)));
+      v -= side * sign(lat) * uFlowBack.w * w * sp * tail;
     }
   }
   vec2 d = p - uSwirl.xy;
   v += uSwirl.w * vec2(-d.y, d.x) * disc(p, uSwirl.xy, uSwirl.z);
+  // A finger that is lifted leaves a hole: the paint round it flows in
+  // and closes it, so the end of a swipe is round, not notched.
+  if (uLift.w > 0.0) {
+    vec2 e = p - uLift.xy;
+    float l = length(e), R = uLift.z;
+    v -= e / max(l, 1e-6) * uLift.w * smoothstep(0.1 * R, 0.5 * R, l) * (1.0 - smoothstep(1.2 * R, 2.2 * R, l));
+  }
   // At the edge of the canvas no paint comes in from outside: a push there
   // must not pull paint away from the edge (it would stretch the colours at
   // the edge into streaks). Pushing paint over the edge is fine.
@@ -143,6 +157,7 @@ vec2 imposedShift(vec2 p, float dt) {
     n = max(n, ceil(L / (0.25 * R)));
   }
   if (uSwirl.w != 0.0 && length(p - uSwirl.xy) < uSwirl.z) near = true;
+  if (uLift.w > 0.0 && length(p - uLift.xy) < 3.0 * uLift.z) near = true;
   if (!near) return vec2(0.0);
   int k = int(min(n, 8.0));
   vec2 q = p;

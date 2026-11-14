@@ -29,6 +29,8 @@ export const M = {
   torchCells: 140, // cells per second under the flame
   torchCellSize: 3, // torch cells are this much bigger than other cells
   torchHeat: 6, // how much faster paint rises under the flame
+  liftTime: 0.25, // a lifted finger: how long the paint flows into its hole (s)
+  liftClose: 0.8, // ... and how far (finger radii)
   // The cup wall holds the paint back: only a little seeps out under the
   // rim. Moving the cup lets more escape.
   leakRest: 0.012, // fraction of the contents per second
@@ -84,7 +86,9 @@ export class Studio {
   private spawnAcc: Record<string, number> = {};
   private stream: Overlay['stream'] = null;
   /** where the swipe was at the last step */
-  private pushFrom: { x: number; y: number } | null = null;
+  private pushFrom: { x: number; y: number; r: number } | null = null;
+  /** where the finger was lifted, and how long ago (s) */
+  private lift: { x: number; y: number; r: number; t: number } | null = null;
   /** where the falling stream lands: it trails the hand a little */
   private land: { x: number; y: number } | null = null;
   /** first smoothing stage between the hand and the landing point */
@@ -113,6 +117,7 @@ export class Studio {
     this.dirty = false;
     this.land = null;
     this.pushFrom = null;
+    this.lift = null;
     this.sim.reset();
   }
 
@@ -358,8 +363,21 @@ export class Studio {
       push[1] = [p.x, p.y, p.r, 1.0];
       pushVel[1] = clampVel(p.vx, p.vy);
       pushFrom[1] = [from.x, from.y];
-      this.pushFrom = { x: p.x, y: p.y };
-    } else this.pushFrom = null;
+      this.pushFrom = { x: p.x, y: p.y, r: p.r };
+      this.lift = null;
+    } else {
+      // the finger is lifted: for a moment the paint flows into its hole
+      if (this.pushFrom) this.lift = { ...this.pushFrom, t: 0 };
+      this.pushFrom = null;
+    }
+    let lift: Forces['lift'];
+    if (this.lift) {
+      const l = this.lift;
+      l.t += dt;
+      if (l.t > M.liftTime) this.lift = null;
+      // (fades out, so the paint does not heap up where the finger was)
+      else lift = [l.x, l.y, l.r, ((M.liftClose * l.r) / M.liftTime) * 2 * (1 - l.t / M.liftTime)];
+    }
 
     return {
       tilt: [t.x * P.grav, t.y * P.grav],
@@ -367,6 +385,7 @@ export class Studio {
       pushVel,
       pushFrom,
       swirl: this.swirl,
+      lift,
       src,
       torch: tq ? [tq.x, tq.y, M.torchR, M.torchHeat] : [0, 0, 1, 0],
       cup: this.cupMap,
